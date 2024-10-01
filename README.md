@@ -16,6 +16,8 @@ Developed as part of a final assignment of Coursera course **CUDA at Scale for t
 
 - **`bin/`**: Stores binary files of the project.
 
+- **`Project_description/`**: Stores some text files about the project.
+
 - **`README.md`**: Contains the project description and usage instructions.
 
 - **`Makefile`**: Used to compile and build the project. Run `make` in the project directory to compile the source code.
@@ -68,3 +70,7 @@ Once the project is compiled and the `run.sh` script is executed:
    ```
 
 2. Type the name of the desired input file and the program will begin processing the video.
+
+## Results
+
+
