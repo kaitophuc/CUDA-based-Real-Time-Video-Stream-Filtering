@@ -1,4 +1,4 @@
-#include "bluring_part_video.hpp"
+#include "../lib/bluring_part_video.hpp"
 #include <iostream>
 #include <string>
 #include <opencv2/opencv.hpp>

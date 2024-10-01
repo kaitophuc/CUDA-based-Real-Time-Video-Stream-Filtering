@@ -10,6 +10,12 @@ Developed as part of a final assignment of Coursera course **CUDA at Scale for t
 
 - **`data/`**: Stores example video files and datasets used for testing and demonstration purposes. This folder is ignored by Git to keep the repository lightweight. Populate this folder with your own video files for local testing.
 
+- **`src/`**: Stores source code of the project.
+
+- **`lib/`**: Stores header files of the project.
+
+- **`bin/`**: Stores binary files of the project.
+
 - **`README.md`**: Contains the project description and usage instructions.
 
 - **`Makefile`**: Used to compile and build the project. Run `make` in the project directory to compile the source code.
