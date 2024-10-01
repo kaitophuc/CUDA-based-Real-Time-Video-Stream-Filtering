@@ -36,7 +36,7 @@ Before building and running the project, ensure the following are installed on y
 To compile and run the project on Windows, use **Windows Subsystem for Linux (WSL)**:
 
 1. Ensure WSL is installed and configured.
-2. Use the `Makefile` to compile the project within the WSL environment.
+2. Follow the Instructions to run on Linux.
 
 ### Linux
 
