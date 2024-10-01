@@ -4,7 +4,7 @@
 
 This project leverages **CUDA** technology to apply real-time blurring to specified regions of video frames. The primary objective is to demonstrate how **GPU acceleration** can be used for video processing tasks like selective blurring, useful in various scenarios such as privacy masking or artistic effects.
 
-Developed as part of a final assignment of Coursera cours **CUDA at Scale for the Enterprise**, this project showcases the efficiency of **GPU computing** in handling large-scale data operations, particularly for time-sensitive applications like real-time video editing.
+Developed as part of a final assignment of Coursera course **CUDA at Scale for the Enterprise**, this project showcases the efficiency of **GPU computing** in handling large-scale data operations, particularly for time-sensitive applications like real-time video editing.
 
 ## Code Organization
 
