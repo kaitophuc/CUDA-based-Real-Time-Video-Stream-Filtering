@@ -1,5 +1,0 @@
-The CUDA-based Real-Time Video Stream Filtering project aims to leverage the power of NVIDIA's CUDA platform to perform high-performance video stream processing. By utilizing the parallel processing capabilities of CUDA, this project seeks to achieve real-time filtering and enhancement of video streams, which is crucial for applications such as live video broadcasting, surveillance, and video conferencing.
-
-Throughout the development of this project, we have explored various CUDA programming techniques and optimized algorithms to ensure efficient processing. The project has provided valuable insights into the challenges and solutions associated with real-time video processing, including memory management, kernel optimization, and data transfer between the CPU and GPU.
-
-Overall, this project has demonstrated the potential of CUDA in enhancing video processing tasks and has laid the groundwork for future advancements in real-time video stream filtering.
