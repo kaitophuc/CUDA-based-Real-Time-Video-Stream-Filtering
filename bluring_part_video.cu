@@ -21,7 +21,7 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   int num_pixels = width * height;
-  
+  // Shared memory for the input image. Use for tiling the image to avoid bank conflicts.
   __shared__ uchar dr_in_shared[TILE_DIM][TILE_DIM];
   __shared__ uchar dg_in_shared[TILE_DIM][TILE_DIM];
   __shared__ uchar db_in_shared[TILE_DIM][TILE_DIM];
@@ -79,6 +79,7 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
   }
 }
 
+// Copy the input image from the host to the device
 __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uchar* dr_in, uchar* dg_in, uchar* db_in, 
                                    int count, int width, int height) {
   int num_pixels = count * width * height;
@@ -91,6 +92,7 @@ __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uch
   CheckCudaError("Error copying from host to device");
 }
 
+// Copy the result from the device to the host
 __host__ void CopyFromDeviceToHost(uchar* dr_out, uchar* dg_out, uchar* db_out, uchar* hr_out, uchar* hg_out, 
                                    uchar* hb_out, int count, int width, int height) {
   int num_pixels = count * width * height;
@@ -103,6 +105,7 @@ __host__ void CopyFromDeviceToHost(uchar* dr_out, uchar* dg_out, uchar* db_out, 
   CheckCudaError("Error copying from device to host");
 }
 
+// Free the device memory
 __host__ void FreeDeviceMemory(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out) {
   cudaFree(dr_in);
   CheckCudaError("Error freeing device memory for dr_in");
@@ -123,6 +126,7 @@ __host__ void CleanUp() {
   CheckCudaError("Error resetting device");
 }
 
+// Kernel to blur the image. Using dynamic parallelism to blur the image.
 __global__ void Blur(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
                      int width, int height, int x, int y) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -138,18 +142,7 @@ __host__ void Execute(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, u
   cudaDeviceSynchronize();
 }
 
-__host__ void ReadPartImageFromFile(cv::Mat* image, uchar* h_r, uchar* h_g, uchar* h_b, int width, int height, 
-                                    int idx_x, int idx_y, int interval_x, int interval_y) {
-  for (int i = idx_y * interval_y; i < std::min((idx_y + 1) * interval_y, height); i++) {
-    for (int j = idx_x * interval_x; j < std::min((idx_x + 1) * interval_x, width); j++) {
-      cv::Vec3b pixel = image->at<cv::Vec3b>(i, j);
-      h_r[i * width + j] = pixel[2];
-      h_g[i * width + j] = pixel[1];
-      h_b[i * width + j] = pixel[0];
-    }
-  }
-}
-
+// Read the image from the file and store it in the host memory
 __host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total, uchar* hb_total, int count, 
                                 int width, int height) {
   int num_pixels = width * height;
@@ -165,6 +158,7 @@ __host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total
   }
 }
 
+// Mouse callback function to get the coordinates of the mouse click
 void OnMouse(int event, int x, int y, int, void* userdata) {
   cv::Mat* image = reinterpret_cast<cv::Mat*>(userdata);
   if (event == cv::EVENT_LBUTTONDOWN) {
@@ -177,6 +171,7 @@ void OnMouse(int event, int x, int y, int, void* userdata) {
 }
 
 int main(int argc, char** argv) {
+  // Read the video file path from the command line
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <video_file_path>" << std::endl;
     return -1;
@@ -185,6 +180,7 @@ int main(int argc, char** argv) {
   std::string video_file_path = argv[1];
 
   try {
+    // Create a window to display the blurred image
     cv::VideoCapture cap(video_file_path);
     if (!cap.isOpened()) {
       std::cerr << "Error: Unable to open video file\n";
@@ -205,6 +201,7 @@ int main(int argc, char** argv) {
     uchar* dg_out;
     uchar* db_out;
 
+    // Allocate device memory
     cudaMalloc(&dr_in, num_pixels * NUM_FRAMES * sizeof(uchar));
     CheckCudaError("Error allocating device memory for dr_in");
     cudaMalloc(&dg_in, num_pixels * NUM_FRAMES * sizeof(uchar));
@@ -218,6 +215,7 @@ int main(int argc, char** argv) {
     cudaMalloc(&db_out, num_pixels * NUM_FRAMES * sizeof(uchar));
     CheckCudaError("Error allocating device memory for db_out");
 
+    // Allocate host memory
     uchar* hr_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
     uchar* hg_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
     uchar* hb_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
@@ -233,6 +231,7 @@ int main(int argc, char** argv) {
     while (true) {
       int count = 0;
       bool flag = true;
+      // Read the video frames
       for (int i = 0; i < NUM_FRAMES; i++) {
         if (!cap.read(frame)) {
           flag = false;
@@ -245,9 +244,11 @@ int main(int argc, char** argv) {
         ++count;
       }
 
+      // Display the blurred image
       cv::setMouseCallback("Blurred Image", OnMouse, &frame);
       std::cout << blur_x << " " << blur_y << std::endl;
 
+      // If no mouse click, display the original image
       if (blur_x == -1 && blur_y == -1) {
         cv::Mat output_image = cv::Mat::zeros(height, width, CV_8UC3);
         for (int idx = 0; idx < count; idx++) {
@@ -300,6 +301,7 @@ int main(int argc, char** argv) {
       }
     }
 
+    // measure execution time
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Time: " << duration.count() << " ms" << std::endl;
