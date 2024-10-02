@@ -18,6 +18,64 @@ __host__ void CheckCudaError(const std::string& error_message) {
 
 __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
                         int idx, int width, int height, int x, int y) {
+    int col = blockIdx.x * TILE_DIM + threadIdx.x;
+    int row = blockIdx.y * TILE_DIM + threadIdx.y;
+    int num_pixels = width * height;
+    // Shared memory for the input image. Use for tiling the image to avoid bank conflicts.
+    __shared__ uchar dr_in_shared[TILE_DIM][TILE_DIM];
+    __shared__ uchar dg_in_shared[TILE_DIM][TILE_DIM];
+    __shared__ uchar db_in_shared[TILE_DIM][TILE_DIM];
+    if (col < width && row < height) {
+      dr_in_shared[threadIdx.y][threadIdx.x] = dr_in[idx * num_pixels + row * width + col];
+      dg_in_shared[threadIdx.y][threadIdx.x] = dg_in[idx * num_pixels + row * width + col];
+      db_in_shared[threadIdx.y][threadIdx.x] = db_in[idx * num_pixels + row * width + col];
+    } else {
+      dr_in_shared[threadIdx.y][threadIdx.x] = 0;
+      dg_in_shared[threadIdx.y][threadIdx.x] = 0;
+      db_in_shared[threadIdx.y][threadIdx.x] = 0;
+    }
+
+    __syncthreads();
+
+    if (col < width && row < height) {
+      if ((col - x) * (col - x) + (row - y) * (row - y) <= DISTANCE * DISTANCE) {
+        double pix_val_r = 0.00;
+        double pix_val_g = 0.00;
+        double pix_val_b = 0.00;
+        for (int fRow = -FILTER_RADIUS; fRow <= FILTER_RADIUS; fRow++) {
+            for (int fCol = -FILTER_RADIUS; fCol <= FILTER_RADIUS; fCol++) {
+                int tileRow = threadIdx.y + fRow;
+                int tileCol = threadIdx.x + fCol;
+                if (tileRow >= 0 && tileRow < TILE_DIM && tileCol >= 0 && tileCol < TILE_DIM) {
+                    pix_val_r += dr_in_shared[tileRow][tileCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                    pix_val_g += dg_in_shared[tileRow][tileCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                    pix_val_b += db_in_shared[tileRow][tileCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                }
+                else {
+                    int imageRow = row + fRow;
+                    int imageCol = col + fCol;
+                    if (imageRow >= 0 && imageRow < height && imageCol >= 0 && imageCol < width) {
+                        pix_val_r += dr_in[idx * num_pixels + imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                        pix_val_g += dg_in[idx * num_pixels + imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                        pix_val_b += db_in[idx * num_pixels + imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                    }
+                }
+            }
+        }
+        dr_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_r);// - dr_in[idx * num_pixels + row * width + col]));
+        dg_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_g);// - dg_in[idx * num_pixels + row * width + col]));
+        db_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_b);// - db_in[idx * num_pixels + row * width + col]));
+      } else {
+        dr_out[idx * num_pixels + row * width + col] = dr_in[idx * num_pixels + row * width + col];
+        dg_out[idx * num_pixels + row * width + col] = dg_in[idx * num_pixels + row * width + col];
+        db_out[idx * num_pixels + row * width + col] = db_in[idx * num_pixels + row * width + col];
+
+      }
+    }
+}
+
+/*__global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
+                        int idx, int width, int height, int x, int y) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   int num_pixels = width * height;
@@ -77,7 +135,7 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
       db_out[idx * num_pixels + row * width + col] = db_in[idx * num_pixels + row * width + col];
     }
   }
-}
+}*/
 
 // Copy the input image from the host to the device
 __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uchar* dr_in, uchar* dg_in, uchar* db_in, 
