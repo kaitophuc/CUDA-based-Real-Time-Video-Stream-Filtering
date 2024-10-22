@@ -16,7 +16,7 @@ __host__ void CheckCudaError(const std::string& error_message) {
   }
 }
 
-__global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
+/*__global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
                         int idx, int width, int height, int x, int y) {
     int col = blockIdx.x * TILE_DIM + threadIdx.x;
     int row = blockIdx.y * TILE_DIM + threadIdx.y;
@@ -72,9 +72,9 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
 
       }
     }
-}
+}*/
 
-/*__global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
+__global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
                         int idx, int width, int height, int x, int y) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -135,7 +135,7 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
       db_out[idx * num_pixels + row * width + col] = db_in[idx * num_pixels + row * width + col];
     }
   }
-}*/
+}
 
 // Copy the input image from the host to the device
 __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uchar* dr_in, uchar* dg_in, uchar* db_in, 
@@ -239,7 +239,7 @@ int main(int argc, char** argv) {
 
   try {
     // Create a window to display the blurred image
-    cv::VideoCapture cap(video_file_path);
+    cv::VideoCapture cap(0);
     if (!cap.isOpened()) {
       std::cerr << "Error: Unable to open video file\n";
       return -1;
@@ -303,8 +303,8 @@ int main(int argc, char** argv) {
       }
 
       // Display the blurred image
-      cv::setMouseCallback("Blurred Image", OnMouse, &frame);
-      std::cout << blur_x << " " << blur_y << std::endl;
+      //cv::setMouseCallback("Blurred Image", OnMouse, &frame);
+      //std::cout << blur_x << " " << blur_y << std::endl;
 
       // If no mouse click, display the original image
       if (blur_x == -1 && blur_y == -1) {
@@ -353,6 +353,9 @@ int main(int argc, char** argv) {
           }
         }
       }
+
+      cv::setMouseCallback("Blurred Image", OnMouse, &frame);
+      std::cout << blur_x << " " << blur_y << std::endl;
 
       if (!flag) {
         break;
