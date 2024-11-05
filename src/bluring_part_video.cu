@@ -239,7 +239,12 @@ int main(int argc, char** argv) {
 
   try {
     // Create a window to display the blurred image
-    cv::VideoCapture cap(0);
+    cv::VideoCapture cap;
+    if (video_file_path == "0") {
+      cap.open(0);
+    } else {
+      cap.open(video_file_path);
+    }
     if (!cap.isOpened()) {
       std::cerr << "Error: Unable to open video file\n";
       return -1;
@@ -301,10 +306,6 @@ int main(int argc, char** argv) {
         ReadImageFromFile(&frame, hr_in, hg_in, hb_in, count, width, height);
         ++count;
       }
-
-      // Display the blurred image
-      //cv::setMouseCallback("Blurred Image", OnMouse, &frame);
-      //std::cout << blur_x << " " << blur_y << std::endl;
 
       // If no mouse click, display the original image
       if (blur_x == -1 && blur_y == -1) {
