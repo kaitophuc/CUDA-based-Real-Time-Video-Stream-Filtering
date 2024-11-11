@@ -4,8 +4,10 @@
 #include <opencv2/opencv.hpp>
 #include <cuda_runtime.h>
 
-int blur_x = -1;
-int blur_y = -1;
+__managed__ int *blur_x;
+__managed__ int *blur_y;
+__managed__ int *distance;
+bool enable = true;
 
 __host__ void CheckCudaError(const std::string& error_message) {
   cudaError_t err = cudaGetLastError();
@@ -75,7 +77,7 @@ __host__ void CheckCudaError(const std::string& error_message) {
 }*/
 
 __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
-                        int idx, int width, int height, int x, int y) {
+                        int idx, int width, int height) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   int num_pixels = width * height;
@@ -97,7 +99,7 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
   __syncthreads();
 
   if (col < width && row < height) {
-    if ((col - x) * (col - x) + (row - y) * (row - y) <= DISTANCE * DISTANCE) {
+    if ((col - *blur_x) * (col - *blur_x) + (row - *blur_y) * (row - *blur_y) <= (*distance) * (*distance)) {
       int pix_val_r = 0;
       int pix_val_g = 0;
       int pix_val_b = 0;
@@ -186,16 +188,16 @@ __host__ void CleanUp() {
 
 // Kernel to blur the image. Using dynamic parallelism to blur the image.
 __global__ void Blur(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
-                     int width, int height, int x, int y) {
+                     int width, int height) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   dim3 block_size(TILE_DIM, TILE_DIM);
   dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
-  Convert<<<grid_size, block_size>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, idx, width, height, x, y);
+  Convert<<<grid_size, block_size>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, idx, width, height);
 }
 
 __host__ void Execute(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
-                      int count, int width, int height, int x, int y) {
-  Blur<<<1, count>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height, x, y);
+                      int count, int width, int height, int *x, int *y) {
+  Blur<<<1, count>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height);
   CheckCudaError("Error executing kernel");
   cudaDeviceSynchronize();
 }
@@ -220,15 +222,27 @@ __host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total
 void OnMouse(int event, int x, int y, int, void* userdata) {
   cv::Mat* image = reinterpret_cast<cv::Mat*>(userdata);
   if (event == cv::EVENT_LBUTTONDOWN) {
-    blur_x = x;
-    blur_y = y;
+    *blur_x = x;
+    *blur_y = y;
+    enable = true;
   } else if (event == cv::EVENT_RBUTTONDOWN) {
-    blur_x = -1;
-    blur_y = -1;
+    *blur_x = -1;
+    *blur_y = -1;
+    enable = false;
   }
 }
 
 int main(int argc, char** argv) {
+  // Allocate Unified Memory
+  cudaMallocManaged(&blur_x, sizeof(int));
+  cudaMallocManaged(&blur_y, sizeof(int));
+  cudaMallocManaged(&distance, sizeof(int));
+
+  // Initialize variables
+  *blur_x = -1;
+  *blur_y = -1;
+  *distance = 100;
+
   // Read the video file path from the command line
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <video_file_path>" << std::endl;
@@ -236,6 +250,11 @@ int main(int argc, char** argv) {
   }
 
   std::string video_file_path = argv[1];
+
+  // Load face detection model
+  std::string modelConfiguration = "./models/deploy.prototxt";
+  std::string modelWeights = "./models/res10_300x300_ssd_iter_140000.caffemodel";
+  cv::dnn::Net net = cv::dnn::readNetFromCaffe(modelConfiguration, modelWeights);
 
   try {
     // Create a window to display the blurred image
@@ -307,8 +326,68 @@ int main(int argc, char** argv) {
         ++count;
       }
 
+      if (!enable) {
+        *blur_x = -1;
+        *blur_y = -1;
+      }
+
+      else {
+
+        // Convert frame to blob
+        cv::Mat blob = cv::dnn::blobFromImage(frame, 1.0, cv::Size(300, 300), cv::Scalar(104.0, 177.0, 123.0));
+
+        // Set the input to the network
+        net.setInput(blob);
+
+        // Perform forward pass to get the face detections
+        cv::Mat detections = net.forward();
+
+        // Get the dimensions of the detections matrix
+        const int numDetections = detections.size[2];
+        const int numCoords = detections.size[3];
+
+        // Get a pointer to the data in the detections matrix
+        float* data = (float*)detections.ptr<float>(0);
+
+        bool face_detected = false;
+        // Loop over the detections
+        for (int i = 0; i < numDetections; ++i) {
+            float confidence = data[i * numCoords + 2];
+
+            // If confidence is above a threshold, draw a rectangle around the face
+            if (confidence > 0.5) {
+                face_detected = true;
+                int x1 = static_cast<int>(data[i * numCoords + 3] * frame.cols);
+                int y1 = static_cast<int>(data[i * numCoords + 4] * frame.rows);
+                int x2 = static_cast<int>(data[i * numCoords + 5] * frame.cols);
+                int y2 = static_cast<int>(data[i * numCoords + 6] * frame.rows);
+
+                // Ensure the rectangle coordinates are within the image boundaries
+                x1 = std::max(0, std::min(x1, frame.cols - 1));
+                y1 = std::max(0, std::min(y1, frame.rows - 1));
+                x2 = std::max(0, std::min(x2, frame.cols - 1));
+                y2 = std::max(0, std::min(y2, frame.rows - 1));
+
+                // Apply blur to the detected face region
+                if (x2 > x1 && y2 > y1) {
+                    *blur_x = (x1 + x2) / 2;
+                    *blur_y = (y1 + y2) / 2;
+                    std::cout << x2 - x1 << " " << y2 - y1 << std::endl; 
+                    *distance = sqrt ((x2 - *blur_x) * (x2 - *blur_x) + (y2 - *blur_y) * (y2 - *blur_y));
+                }
+            }
+        }
+
+        if (face_detected == 0) {
+          *blur_x = -1;
+          *blur_y = -1;
+        }
+
+      }
+
+
       // If no mouse click, display the original image
-      if (blur_x == -1 && blur_y == -1) {
+      if (*blur_x == -1 && *blur_y == -1) {
         cv::Mat output_image = cv::Mat::zeros(height, width, CV_8UC3);
         for (int idx = 0; idx < count; idx++) {
           #pragma omp parallel for collapse(2)
@@ -356,7 +435,7 @@ int main(int argc, char** argv) {
       }
 
       cv::setMouseCallback("Blurred Image", OnMouse, &frame);
-      std::cout << blur_x << " " << blur_y << std::endl;
+      //std::cout << blur_x << " " << blur_y << std::endl;
 
       if (!flag) {
         break;

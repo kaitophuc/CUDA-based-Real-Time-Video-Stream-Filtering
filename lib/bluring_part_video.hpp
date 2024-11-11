@@ -14,7 +14,7 @@
 #define BLUR_SIZE 30
 #define TILE_DIM 32
 #define FILTER_RADIUS 10
-#define DISTANCE 300
+//#define DISTANCE 100
 #define NUM_FRAMES 1
 
 __constant__ double Gaussian[21][21] = {
