@@ -77,3 +77,5 @@ The main reason for this issue lies in the CPU's slow reading of image data from
 
 UPDATE: If you run this program on Linux (I'm using Ubuntu) but not WSL (Window Subsystem for Linux), you can change NUM_FRAMES in bluring_part_video.hpp to 1 to apply real-time filter. 
 
+UPDATE 2: The project currently applies OpenCV to detect face and blur face area. Due to this, application has to run in real-time frame, so I have to delete dynamic parallelism on the project.
+
