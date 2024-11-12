@@ -28,9 +28,9 @@ __host__ void CheckCudaError(const std::string& error_message) {
     __shared__ uchar dg_in_shared[TILE_DIM][TILE_DIM];
     __shared__ uchar db_in_shared[TILE_DIM][TILE_DIM];
     if (col < width && row < height) {
-      dr_in_shared[threadIdx.y][threadIdx.x] = dr_in[idx * num_pixels + row * width + col];
-      dg_in_shared[threadIdx.y][threadIdx.x] = dg_in[idx * num_pixels + row * width + col];
-      db_in_shared[threadIdx.y][threadIdx.x] = db_in[idx * num_pixels + row * width + col];
+      dr_in_shared[threadIdx.y][threadIdx.x] = dr_in[row * width + col];
+      dg_in_shared[threadIdx.y][threadIdx.x] = dg_in[row * width + col];
+      db_in_shared[threadIdx.y][threadIdx.x] = db_in[row * width + col];
     } else {
       dr_in_shared[threadIdx.y][threadIdx.x] = 0;
       dg_in_shared[threadIdx.y][threadIdx.x] = 0;
@@ -57,27 +57,27 @@ __host__ void CheckCudaError(const std::string& error_message) {
                     int imageRow = row + fRow;
                     int imageCol = col + fCol;
                     if (imageRow >= 0 && imageRow < height && imageCol >= 0 && imageCol < width) {
-                        pix_val_r += dr_in[idx * num_pixels + imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                        pix_val_g += dg_in[idx * num_pixels + imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                        pix_val_b += db_in[idx * num_pixels + imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                        pix_val_r += dr_in[imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                        pix_val_g += dg_in[imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
+                        pix_val_b += db_in[imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
                     }
                 }
             }
         }
-        dr_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_r);// - dr_in[idx * num_pixels + row * width + col]));
-        dg_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_g);// - dg_in[idx * num_pixels + row * width + col]));
-        db_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_b);// - db_in[idx * num_pixels + row * width + col]));
+        dr_out[row * width + col] = static_cast<uchar>(pix_val_r);// - dr_in[row * width + col]));
+        dg_out[row * width + col] = static_cast<uchar>(pix_val_g);// - dg_in[row * width + col]));
+        db_out[row * width + col] = static_cast<uchar>(pix_val_b);// - db_in[row * width + col]));
       } else {
-        dr_out[idx * num_pixels + row * width + col] = dr_in[idx * num_pixels + row * width + col];
-        dg_out[idx * num_pixels + row * width + col] = dg_in[idx * num_pixels + row * width + col];
-        db_out[idx * num_pixels + row * width + col] = db_in[idx * num_pixels + row * width + col];
+        dr_out[row * width + col] = dr_in[row * width + col];
+        dg_out[row * width + col] = dg_in[row * width + col];
+        db_out[row * width + col] = db_in[row * width + col];
 
       }
     }
 }*/
 
 __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
-                        int idx, int width, int height) {
+                        int width, int height) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   int num_pixels = width * height;
@@ -87,9 +87,9 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
   __shared__ uchar db_in_shared[TILE_DIM][TILE_DIM];
   
   if (col < width && row < height) {
-    dr_in_shared[threadIdx.y][threadIdx.x] = dr_in[idx * num_pixels + row * width + col];
-    dg_in_shared[threadIdx.y][threadIdx.x] = dg_in[idx * num_pixels + row * width + col];
-    db_in_shared[threadIdx.y][threadIdx.x] = db_in[idx * num_pixels + row * width + col];
+    dr_in_shared[threadIdx.y][threadIdx.x] = dr_in[row * width + col];
+    dg_in_shared[threadIdx.y][threadIdx.x] = dg_in[row * width + col];
+    db_in_shared[threadIdx.y][threadIdx.x] = db_in[row * width + col];
   } else {
     dr_in_shared[threadIdx.y][threadIdx.x] = 0;
     dg_in_shared[threadIdx.y][threadIdx.x] = 0;
@@ -119,56 +119,56 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
             int i = row + f_row;
             int j = col + f_col;
             if (i >= 0 && i < height && j >= 0 && j < width) {
-              pix_val_r += dr_in[idx * num_pixels + i * width + j];
-              pix_val_g += dg_in[idx * num_pixels + i * width + j];
-              pix_val_b += db_in[idx * num_pixels + i * width + j];
+              pix_val_r += dr_in[i * width + j];
+              pix_val_g += dg_in[i * width + j];
+              pix_val_b += db_in[i * width + j];
               ++pixels;
             }
           }
         }
       }
 
-      dr_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_r / pixels);
-      dg_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_g / pixels);
-      db_out[idx * num_pixels + row * width + col] = static_cast<uchar>(pix_val_b / pixels);
+      dr_out[row * width + col] = static_cast<uchar>(pix_val_r / pixels);
+      dg_out[row * width + col] = static_cast<uchar>(pix_val_g / pixels);
+      db_out[row * width + col] = static_cast<uchar>(pix_val_b / pixels);
     } else {
-      dr_out[idx * num_pixels + row * width + col] = dr_in[idx * num_pixels + row * width + col];
-      dg_out[idx * num_pixels + row * width + col] = dg_in[idx * num_pixels + row * width + col];
-      db_out[idx * num_pixels + row * width + col] = db_in[idx * num_pixels + row * width + col];
+      dr_out[row * width + col] = dr_in[row * width + col];
+      dg_out[row * width + col] = dg_in[row * width + col];
+      db_out[row * width + col] = db_in[row * width + col];
     }
   }
 }
 
 __host__ void AllocateHostMemory(uchar** hr_in, uchar** hg_in, uchar** hb_in, uchar** hr_out, uchar** hg_out, 
                                  uchar** hb_out, int num_pixels) {
-  *hr_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-  *hg_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-  *hb_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-  *hr_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-  *hg_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-  *hb_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+  *hr_in = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
+  *hg_in = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
+  *hb_in = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
+  *hr_out = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
+  *hg_out = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
+  *hb_out = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
 }
 
 __host__ void AllocateDeviceMemory(uchar** dr_in, uchar** dg_in, uchar** db_in, uchar** dr_out, uchar** dg_out, 
                                    uchar** db_out, int num_pixels) {
-  cudaMalloc(dr_in, num_pixels * NUM_FRAMES * sizeof(uchar));
+  cudaMalloc(dr_in, num_pixels * sizeof(uchar));
   CheckCudaError("Error allocating device memory for dr_in");
-  cudaMalloc(dg_in, num_pixels * NUM_FRAMES * sizeof(uchar));
+  cudaMalloc(dg_in, num_pixels * sizeof(uchar));
   CheckCudaError("Error allocating device memory for dg_in");
-  cudaMalloc(db_in, num_pixels * NUM_FRAMES * sizeof(uchar));
+  cudaMalloc(db_in, num_pixels * sizeof(uchar));
   CheckCudaError("Error allocating device memory for db_in");
-  cudaMalloc(dr_out, num_pixels * NUM_FRAMES * sizeof(uchar));
+  cudaMalloc(dr_out, num_pixels * sizeof(uchar));
   CheckCudaError("Error allocating device memory for dr_out");
-  cudaMalloc(dg_out, num_pixels * NUM_FRAMES * sizeof(uchar));
+  cudaMalloc(dg_out, num_pixels * sizeof(uchar));
   CheckCudaError("Error allocating device memory for dg_out");
-  cudaMalloc(db_out, num_pixels * NUM_FRAMES * sizeof(uchar));
+  cudaMalloc(db_out, num_pixels * sizeof(uchar));
   CheckCudaError("Error allocating device memory for db_out");
 }
 
 // Copy the input image from the host to the device
 __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uchar* dr_in, uchar* dg_in, uchar* db_in, 
-                                   int count, int width, int height) {
-  int num_pixels = count * width * height;
+                                   int width, int height) {
+  int num_pixels = width * height;
   size_t size = num_pixels * sizeof(uchar);
   cudaMemcpy(dr_in, hr_in, size, cudaMemcpyHostToDevice);
   CheckCudaError("Error copying from host to device");
@@ -180,8 +180,8 @@ __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uch
 
 // Copy the result from the device to the host
 __host__ void CopyFromDeviceToHost(uchar* dr_out, uchar* dg_out, uchar* db_out, uchar* hr_out, uchar* hg_out, 
-                                   uchar* hb_out, int count, int width, int height) {
-  int num_pixels = count * width * height;
+                                   uchar* hb_out, int width, int height) {
+  int num_pixels = width * height;
   size_t size = num_pixels * sizeof(uchar);
   cudaMemcpy(hr_out, dr_out, size, cudaMemcpyDeviceToHost);
   CheckCudaError("Error copying from device to host");
@@ -212,24 +212,17 @@ __host__ void CleanUp() {
   CheckCudaError("Error resetting device");
 }
 
-// Kernel to blur the image. Using dynamic parallelism to blur the image.
-__global__ void Blur(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
-                     int width, int height) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+__host__ void Execute(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
+                      int width, int height, int *x, int *y) {
   dim3 block_size(TILE_DIM, TILE_DIM);
   dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
-  Convert<<<grid_size, block_size>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, idx, width, height);
-}
-
-__host__ void Execute(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
-                      int count, int width, int height, int *x, int *y) {
-  Blur<<<1, count>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height);
+  Convert<<<grid_size, block_size>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height);
   CheckCudaError("Error executing kernel");
   cudaDeviceSynchronize();
 }
 
 // Read the image from the file and store it in the host memory
-__host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total, uchar* hb_total, int count, 
+__host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total, uchar* hb_total,
                                 int width, int height) {
   int num_pixels = width * height;
 
@@ -237,9 +230,9 @@ __host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total
   for (int i = 0; i < height; i++) {
     for (int j = 0; j < width; j++) {
       cv::Vec3b pixel = image->at<cv::Vec3b>(i, j);
-      hr_total[count * num_pixels + i * width + j] = pixel[2];
-      hg_total[count * num_pixels + i * width + j] = pixel[1];
-      hb_total[count * num_pixels + i * width + j] = pixel[0];
+      hr_total[i * width + j] = pixel[2];
+      hg_total[i * width + j] = pixel[1];
+      hb_total[i * width + j] = pixel[0];
     }
   }
 }
@@ -260,26 +253,23 @@ void OnMouse(int event, int x, int y, int, void* userdata) {
 
 void DoJob(cv::Mat frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
            uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
-           uchar* dr_out, uchar* dg_out, uchar* db_out, int count) {
-  CopyFromHostToDevice(hr_in, hg_in, hb_in, dr_in, dg_in, db_in, count, width, height);
+           uchar* dr_out, uchar* dg_out, uchar* db_out) {
+  CopyFromHostToDevice(hr_in, hg_in, hb_in, dr_in, dg_in, db_in, width, height);
   CheckCudaError("Error copying from host to device");
-  Execute(dr_in, dg_in, db_in, dr_out, dg_out, db_out, count, width, height, blur_x, blur_y);
+  Execute(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height, blur_x, blur_y);
   CheckCudaError("Error executing kernel");
-  CopyFromDeviceToHost(dr_out, dg_out, db_out, hr_out, hg_out, hb_out, count, width, height);
+  CopyFromDeviceToHost(dr_out, dg_out, db_out, hr_out, hg_out, hb_out, width, height);
   CheckCudaError("Error copying from device to host");
 
-  cv::Mat output_image = cv::Mat::zeros(height, width, CV_8UC3);
-  for (int idx = 0; idx < count; idx++) {
-    #pragma omp parallel for collapse(2)
-    for (int i = 0; i < height; i++) {
-      for (int j = 0; j < width; j++) {
-        cv::Vec3b pixel;
-        pixel[2] = hr_out[idx * num_pixels + i * width + j];
-        pixel[1] = hg_out[idx * num_pixels + i * width + j];
-        pixel[0] = hb_out[idx * num_pixels + i * width + j];
-        //output_image.at<cv::Vec3b>(i, j) = pixel;
-        frame.at<cv::Vec3b>(i, j) = pixel;
-      }
+  #pragma omp parallel for collapse(2)
+  for (int i = 0; i < height; i++) {
+    for (int j = 0; j < width; j++) {
+      cv::Vec3b pixel;
+      pixel[2] = hr_out[i * width + j];
+      pixel[1] = hg_out[i * width + j];
+      pixel[0] = hb_out[i * width + j];
+      //output_image.at<cv::Vec3b>(i, j) = pixel;
+      frame.at<cv::Vec3b>(i, j) = pixel;
     }
     //cv::imshow("Blurred Image", frame);
   }
@@ -343,20 +333,14 @@ int main(int argc, char** argv) {
     auto start = std::chrono::high_resolution_clock::now();
 
     while (true) {
-      int count = 0;
-      bool flag = true;
       // Read the video frames
-      for (int i = 0; i < NUM_FRAMES; i++) {
-        if (!cap.read(frame)) {
-          flag = false;
-          std::cerr << "Error: Unable to read video frame\n";
-          auto end = std::chrono::high_resolution_clock::now();
-          auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-          std::cout << "Time: " << duration.count() << " ms" << std::endl;
-        }
-        ReadImageFromFile(&frame, hr_in, hg_in, hb_in, count, width, height);
-        ++count;
+      if (!cap.read(frame)) {
+        std::cerr << "Error: Unable to read video frame\n";
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+        std::cout << "Time: " << duration.count() << " ms" << std::endl;
       }
+      ReadImageFromFile(&frame, hr_in, hg_in, hb_in, width, height);
 
       if (!enable) {
         *blur_x = -1;
@@ -406,7 +390,7 @@ int main(int argc, char** argv) {
                     *blur_x = (x1 + x2) / 2;
                     *blur_y = (y1 + y2) / 2;
                     *distance = sqrt ((x2 - *blur_x) * (x2 - *blur_x) + (y2 - *blur_y) * (y2 - *blur_y));
-                    DoJob(frame, width, height, frames, num_pixels, hr_in, hg_in, hb_in, hr_out, hg_out, hb_out, dr_in, dg_in, db_in, dr_out, dg_out, db_out, count);
+                    DoJob(frame, width, height, frames, num_pixels, hr_in, hg_in, hb_in, hr_out, hg_out, hb_out, dr_in, dg_in, db_in, dr_out, dg_out, db_out);
       
                       // Draw a rectangle around the detected face
                     cv::rectangle(frame, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 255, 0), 2); // Green rectangle with thickness 2
@@ -426,29 +410,11 @@ int main(int argc, char** argv) {
 
       // If no mouse click, display the original image
       if (*blur_x == -1 && *blur_y == -1) {
-        cv::Mat output_image = cv::Mat::zeros(height, width, CV_8UC3);
-        for (int idx = 0; idx < count; idx++) {
-          #pragma omp parallel for collapse(2)
-          for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-              cv::Vec3b pixel;
-              pixel[2] = hr_in[idx * num_pixels + i * width + j];
-              pixel[1] = hg_in[idx * num_pixels + i * width + j];
-              pixel[0] = hb_in[idx * num_pixels + i * width + j];
-              output_image.at<cv::Vec3b>(i, j) = pixel;
-            }
-          }
-          cv::imshow("Blurred Image", output_image);
-          if (cv::waitKey(1000 / frames) == 27) {
-            flag = false;
-            break;
-          }
+        cv::imshow("Blurred Image", frame);
+        if (cv::waitKey(1000 / frames) == 27) {
+          break;
         }
       } 
-      
-      else {
-        DoJob(frame, width, height, frames, num_pixels, hr_in, hg_in, hb_in, hr_out, hg_out, hb_out, dr_in, dg_in, db_in, dr_out, dg_out, db_out, count);
-      }
 
       cv::setMouseCallback("Blurred Image", OnMouse, &frame);
       //std::cout << blur_x << " " << blur_y << std::endl;
