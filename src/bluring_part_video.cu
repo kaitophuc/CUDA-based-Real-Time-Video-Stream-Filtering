@@ -139,6 +139,32 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
   }
 }
 
+__host__ void AllocateHostMemory(uchar** hr_in, uchar** hg_in, uchar** hb_in, uchar** hr_out, uchar** hg_out, 
+                                 uchar** hb_out, int num_pixels) {
+  *hr_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+  *hg_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+  *hb_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+  *hr_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+  *hg_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+  *hb_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+}
+
+__host__ void AllocateDeviceMemory(uchar** dr_in, uchar** dg_in, uchar** db_in, uchar** dr_out, uchar** dg_out, 
+                                   uchar** db_out, int num_pixels) {
+  cudaMalloc(dr_in, num_pixels * NUM_FRAMES * sizeof(uchar));
+  CheckCudaError("Error allocating device memory for dr_in");
+  cudaMalloc(dg_in, num_pixels * NUM_FRAMES * sizeof(uchar));
+  CheckCudaError("Error allocating device memory for dg_in");
+  cudaMalloc(db_in, num_pixels * NUM_FRAMES * sizeof(uchar));
+  CheckCudaError("Error allocating device memory for db_in");
+  cudaMalloc(dr_out, num_pixels * NUM_FRAMES * sizeof(uchar));
+  CheckCudaError("Error allocating device memory for dr_out");
+  cudaMalloc(dg_out, num_pixels * NUM_FRAMES * sizeof(uchar));
+  CheckCudaError("Error allocating device memory for dg_out");
+  cudaMalloc(db_out, num_pixels * NUM_FRAMES * sizeof(uchar));
+  CheckCudaError("Error allocating device memory for db_out");
+}
+
 // Copy the input image from the host to the device
 __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uchar* dr_in, uchar* dg_in, uchar* db_in, 
                                    int count, int width, int height) {
@@ -232,6 +258,34 @@ void OnMouse(int event, int x, int y, int, void* userdata) {
   }
 }
 
+void DoJob(cv::Mat frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
+           uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
+           uchar* dr_out, uchar* dg_out, uchar* db_out, int count) {
+  CopyFromHostToDevice(hr_in, hg_in, hb_in, dr_in, dg_in, db_in, count, width, height);
+  CheckCudaError("Error copying from host to device");
+  Execute(dr_in, dg_in, db_in, dr_out, dg_out, db_out, count, width, height, blur_x, blur_y);
+  CheckCudaError("Error executing kernel");
+  CopyFromDeviceToHost(dr_out, dg_out, db_out, hr_out, hg_out, hb_out, count, width, height);
+  CheckCudaError("Error copying from device to host");
+
+  cv::Mat output_image = cv::Mat::zeros(height, width, CV_8UC3);
+  for (int idx = 0; idx < count; idx++) {
+    #pragma omp parallel for collapse(2)
+    for (int i = 0; i < height; i++) {
+      for (int j = 0; j < width; j++) {
+        cv::Vec3b pixel;
+        pixel[2] = hr_out[idx * num_pixels + i * width + j];
+        pixel[1] = hg_out[idx * num_pixels + i * width + j];
+        pixel[0] = hb_out[idx * num_pixels + i * width + j];
+        //output_image.at<cv::Vec3b>(i, j) = pixel;
+        frame.at<cv::Vec3b>(i, j) = pixel;
+      }
+    }
+    //cv::imshow("Blurred Image", frame);
+  }
+}
+  
+
 int main(int argc, char** argv) {
   // Allocate Unified Memory
   cudaMallocManaged(&blur_x, sizeof(int));
@@ -276,35 +330,13 @@ int main(int argc, char** argv) {
 
     std::cout << "Width: " << width << " Height: " << height << " Frames: " << frames << std::endl;
 
-    uchar* dr_in;
-    uchar* dg_in;
-    uchar* db_in;
-    uchar* dr_out;
-    uchar* dg_out;
-    uchar* db_out;
-
     // Allocate device memory
-    cudaMalloc(&dr_in, num_pixels * NUM_FRAMES * sizeof(uchar));
-    CheckCudaError("Error allocating device memory for dr_in");
-    cudaMalloc(&dg_in, num_pixels * NUM_FRAMES * sizeof(uchar));
-    CheckCudaError("Error allocating device memory for dg_in");
-    cudaMalloc(&db_in, num_pixels * NUM_FRAMES * sizeof(uchar));
-    CheckCudaError("Error allocating device memory for db_in");
-    cudaMalloc(&dr_out, num_pixels * NUM_FRAMES * sizeof(uchar));
-    CheckCudaError("Error allocating device memory for dr_out");
-    cudaMalloc(&dg_out, num_pixels * NUM_FRAMES * sizeof(uchar));
-    CheckCudaError("Error allocating device memory for dg_out");
-    cudaMalloc(&db_out, num_pixels * NUM_FRAMES * sizeof(uchar));
-    CheckCudaError("Error allocating device memory for db_out");
+    uchar *dr_in, *dg_in, *db_in, *dr_out, *dg_out, *db_out;
+    AllocateDeviceMemory(&dr_in, &dg_in, &db_in, &dr_out, &dg_out, &db_out, num_pixels);
 
     // Allocate host memory
-    uchar* hr_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-    uchar* hg_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-    uchar* hb_in = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-
-    uchar* hr_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-    uchar* hg_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
-    uchar* hb_out = static_cast<uchar*>(malloc(num_pixels * NUM_FRAMES * sizeof(uchar)));
+    uchar* hr_in; uchar* hg_in; uchar* hb_in; uchar* hr_out; uchar* hg_out; uchar* hb_out;
+    AllocateHostMemory(&hr_in, &hg_in, &hb_in, &hr_out, &hg_out, &hb_out, num_pixels);
 
     cv::Mat frame;
 
@@ -356,6 +388,7 @@ int main(int argc, char** argv) {
 
             // If confidence is above a threshold, draw a rectangle around the face
             if (confidence > 0.5) {
+                std::cout << confidence << std::endl;
                 face_detected = true;
                 int x1 = static_cast<int>(data[i * numCoords + 3] * frame.cols);
                 int y1 = static_cast<int>(data[i * numCoords + 4] * frame.rows);
@@ -372,8 +405,13 @@ int main(int argc, char** argv) {
                 if (x2 > x1 && y2 > y1) {
                     *blur_x = (x1 + x2) / 2;
                     *blur_y = (y1 + y2) / 2;
-                    std::cout << x2 - x1 << " " << y2 - y1 << std::endl; 
                     *distance = sqrt ((x2 - *blur_x) * (x2 - *blur_x) + (y2 - *blur_y) * (y2 - *blur_y));
+                    DoJob(frame, width, height, frames, num_pixels, hr_in, hg_in, hb_in, hr_out, hg_out, hb_out, dr_in, dg_in, db_in, dr_out, dg_out, db_out, count);
+      
+                      // Draw a rectangle around the detected face
+                    cv::rectangle(frame, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 255, 0), 2); // Green rectangle with thickness 2
+                    cv::imshow("Blurred Image", frame);
+              
                 }
             }
         }
@@ -406,47 +444,24 @@ int main(int argc, char** argv) {
             break;
           }
         }
-      } else {
-        CopyFromHostToDevice(hr_in, hg_in, hb_in, dr_in, dg_in, db_in, count, width, height);
-        CheckCudaError("Error copying from host to device");
-        Execute(dr_in, dg_in, db_in, dr_out, dg_out, db_out, count, width, height, blur_x, blur_y);
-        CheckCudaError("Error executing kernel");
-        CopyFromDeviceToHost(dr_out, dg_out, db_out, hr_out, hg_out, hb_out, count, width, height);
-        CheckCudaError("Error copying from device to host");
-
-        cv::Mat output_image = cv::Mat::zeros(height, width, CV_8UC3);
-        for (int idx = 0; idx < count; idx++) {
-          #pragma omp parallel for collapse(2)
-          for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-              cv::Vec3b pixel;
-              pixel[2] = hr_out[idx * num_pixels + i * width + j];
-              pixel[1] = hg_out[idx * num_pixels + i * width + j];
-              pixel[0] = hb_out[idx * num_pixels + i * width + j];
-              output_image.at<cv::Vec3b>(i, j) = pixel;
-            }
-          }
-          cv::imshow("Blurred Image", output_image);
-          if (cv::waitKey(1000 / frames) == 27) {
-            flag = false;
-            break;
-          }
-        }
+      } 
+      
+      else {
+        DoJob(frame, width, height, frames, num_pixels, hr_in, hg_in, hb_in, hr_out, hg_out, hb_out, dr_in, dg_in, db_in, dr_out, dg_out, db_out, count);
       }
 
       cv::setMouseCallback("Blurred Image", OnMouse, &frame);
       //std::cout << blur_x << " " << blur_y << std::endl;
-
-      if (!flag) {
-        break;
-      }
+      if (cv::waitKey(1000 / frames) == 27) break;
     }
 
     // measure execution time
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Time: " << duration.count() << " ms" << std::endl;
-  } catch (const std::exception& e) {
+  } 
+  
+  catch (const std::exception& e) {
     std::cerr << "Error: " << e.what() << std::endl;
     return 1;
   }
