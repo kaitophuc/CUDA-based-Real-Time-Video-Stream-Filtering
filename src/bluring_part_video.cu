@@ -340,6 +340,10 @@ int main(int argc, char** argv) {
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
         std::cout << "Time: " << duration.count() << " ms" << std::endl;
       }
+
+      // Flip the frame horizontally
+      cv::flip(frame, frame, 1);
+
       ReadImageFromFile(&frame, hr_in, hg_in, hb_in, width, height);
 
       if (!enable) {
