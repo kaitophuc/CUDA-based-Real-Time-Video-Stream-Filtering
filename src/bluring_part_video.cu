@@ -410,16 +410,8 @@ int main(int argc, char** argv) {
         }
 
       }
-
-
-      // If no mouse click, display the original image
-      if (*blur_x == -1 && *blur_y == -1) {
-        cv::imshow("Blurred Image", frame);
-        if (cv::waitKey(1000 / frames) == 27) {
-          break;
-        }
-      } 
-
+      
+      cv::imshow("Blurred Image", frame);
       cv::setMouseCallback("Blurred Image", OnMouse, &frame);
       //std::cout << blur_x << " " << blur_y << std::endl;
       if (cv::waitKey(1000 / frames) == 27) break;
