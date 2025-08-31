@@ -1,8 +1,4 @@
 #include "../lib/bluring_part_video.hpp"
-#include <iostream>
-#include <string>
-#include <opencv2/opencv.hpp>
-#include <cuda_runtime.h>
 
 __managed__ int *blur_x;
 __managed__ int *blur_y;
@@ -17,64 +13,6 @@ __host__ void CheckCudaError(const std::string& error_message) {
     exit(1);
   }
 }
-
-/*__global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
-                        int idx, int width, int height, int x, int y) {
-    int col = blockIdx.x * TILE_DIM + threadIdx.x;
-    int row = blockIdx.y * TILE_DIM + threadIdx.y;
-    int num_pixels = width * height;
-    // Shared memory for the input image. Use for tiling the image to avoid bank conflicts.
-    __shared__ uchar dr_in_shared[TILE_DIM][TILE_DIM];
-    __shared__ uchar dg_in_shared[TILE_DIM][TILE_DIM];
-    __shared__ uchar db_in_shared[TILE_DIM][TILE_DIM];
-    if (col < width && row < height) {
-      dr_in_shared[threadIdx.y][threadIdx.x] = dr_in[row * width + col];
-      dg_in_shared[threadIdx.y][threadIdx.x] = dg_in[row * width + col];
-      db_in_shared[threadIdx.y][threadIdx.x] = db_in[row * width + col];
-    } else {
-      dr_in_shared[threadIdx.y][threadIdx.x] = 0;
-      dg_in_shared[threadIdx.y][threadIdx.x] = 0;
-      db_in_shared[threadIdx.y][threadIdx.x] = 0;
-    }
-
-    __syncthreads();
-
-    if (col < width && row < height) {
-      if ((col - x) * (col - x) + (row - y) * (row - y) <= DISTANCE * DISTANCE) {
-        double pix_val_r = 0.00;
-        double pix_val_g = 0.00;
-        double pix_val_b = 0.00;
-        for (int fRow = -FILTER_RADIUS; fRow <= FILTER_RADIUS; fRow++) {
-            for (int fCol = -FILTER_RADIUS; fCol <= FILTER_RADIUS; fCol++) {
-                int tileRow = threadIdx.y + fRow;
-                int tileCol = threadIdx.x + fCol;
-                if (tileRow >= 0 && tileRow < TILE_DIM && tileCol >= 0 && tileCol < TILE_DIM) {
-                    pix_val_r += dr_in_shared[tileRow][tileCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                    pix_val_g += dg_in_shared[tileRow][tileCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                    pix_val_b += db_in_shared[tileRow][tileCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                }
-                else {
-                    int imageRow = row + fRow;
-                    int imageCol = col + fCol;
-                    if (imageRow >= 0 && imageRow < height && imageCol >= 0 && imageCol < width) {
-                        pix_val_r += dr_in[imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                        pix_val_g += dg_in[imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                        pix_val_b += db_in[imageRow * width + imageCol] * Gaussian[fRow + FILTER_RADIUS][fCol + FILTER_RADIUS];
-                    }
-                }
-            }
-        }
-        dr_out[row * width + col] = static_cast<uchar>(pix_val_r);// - dr_in[row * width + col]));
-        dg_out[row * width + col] = static_cast<uchar>(pix_val_g);// - dg_in[row * width + col]));
-        db_out[row * width + col] = static_cast<uchar>(pix_val_b);// - db_in[row * width + col]));
-      } else {
-        dr_out[row * width + col] = dr_in[row * width + col];
-        dg_out[row * width + col] = dg_in[row * width + col];
-        db_out[row * width + col] = db_in[row * width + col];
-
-      }
-    }
-}*/
 
 __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
                         int width, int height) {
@@ -139,77 +77,54 @@ __global__ void Convert(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out,
   }
 }
 
-__host__ void AllocateHostMemory(uchar** hr_in, uchar** hg_in, uchar** hb_in, uchar** hr_out, uchar** hg_out, 
+__host__ void AllocateHostMemory(uchar** h_buf, uchar** hr_in, uchar** hg_in, uchar** hb_in, uchar** hr_out, uchar** hg_out, 
                                  uchar** hb_out, int num_pixels) {
-  *hr_in = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
-  *hg_in = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
-  *hb_in = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
-  *hr_out = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
-  *hg_out = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
-  *hb_out = static_cast<uchar*>(malloc(num_pixels * sizeof(uchar)));
+  cudaMallocHost(h_buf, 6 * num_pixels * sizeof(uchar));
+  *hr_in = *h_buf;
+  *hg_in = *hr_in + num_pixels;
+  *hb_in = *hg_in + num_pixels;
+  *hr_out = *hb_in + num_pixels;
+  *hg_out = *hr_out + num_pixels;
+  *hb_out = *hg_out + num_pixels;
+  memset(*h_buf, 0, 6 * num_pixels * sizeof(uchar));
 }
 
-__host__ void AllocateDeviceMemory(uchar** dr_in, uchar** dg_in, uchar** db_in, uchar** dr_out, uchar** dg_out, 
+__host__ void AllocateDeviceMemory(uchar** d_buf, uchar** dr_in, uchar** dg_in, uchar** db_in, uchar** dr_out, uchar** dg_out, 
                                    uchar** db_out, int num_pixels) {
-  cudaMalloc(dr_in, num_pixels * sizeof(uchar));
-  CheckCudaError("Error allocating device memory for dr_in");
-  cudaMalloc(dg_in, num_pixels * sizeof(uchar));
-  CheckCudaError("Error allocating device memory for dg_in");
-  cudaMalloc(db_in, num_pixels * sizeof(uchar));
-  CheckCudaError("Error allocating device memory for db_in");
-  cudaMalloc(dr_out, num_pixels * sizeof(uchar));
-  CheckCudaError("Error allocating device memory for dr_out");
-  cudaMalloc(dg_out, num_pixels * sizeof(uchar));
-  CheckCudaError("Error allocating device memory for dg_out");
-  cudaMalloc(db_out, num_pixels * sizeof(uchar));
-  CheckCudaError("Error allocating device memory for db_out");
+  size_t total_size = 6 * num_pixels * sizeof(uchar);
+  cudaMalloc(d_buf, total_size);
+  *dr_in = *d_buf;
+  *dg_in = *dr_in + num_pixels;
+  *db_in = *dg_in + num_pixels;
+  *dr_out = *db_in + num_pixels;
+  *dg_out = *dr_out + num_pixels;
+  *db_out = *dg_out + num_pixels;
+  cudaMemset(*d_buf, 0, total_size);
 }
 
 // Copy the input image from the host to the device
 __host__ void CopyFromHostToDevice(uchar* hr_in, uchar* hg_in, uchar* hb_in, uchar* dr_in, uchar* dg_in, uchar* db_in, 
-                                   int width, int height) {
-  int num_pixels = width * height;
-  size_t size = num_pixels * sizeof(uchar);
+                                   int num_pixels) {
+  size_t size = 3 * num_pixels * sizeof(uchar);
+  // Copy R, G, B channels together
   cudaMemcpy(dr_in, hr_in, size, cudaMemcpyHostToDevice);
-  CheckCudaError("Error copying from host to device");
-  cudaMemcpy(dg_in, hg_in, size, cudaMemcpyHostToDevice);
-  CheckCudaError("Error copying from host to device");
-  cudaMemcpy(db_in, hb_in, size, cudaMemcpyHostToDevice);
-  CheckCudaError("Error copying from host to device");
 }
 
 // Copy the result from the device to the host
 __host__ void CopyFromDeviceToHost(uchar* dr_out, uchar* dg_out, uchar* db_out, uchar* hr_out, uchar* hg_out, 
-                                   uchar* hb_out, int width, int height) {
-  int num_pixels = width * height;
-  size_t size = num_pixels * sizeof(uchar);
+                                   uchar* hb_out, int num_pixels) {
+  size_t size = 3 * num_pixels * sizeof(uchar);
+  // Copy R, G, B channels together
   cudaMemcpy(hr_out, dr_out, size, cudaMemcpyDeviceToHost);
-  CheckCudaError("Error copying from device to host");
-  cudaMemcpy(hg_out, dg_out, size, cudaMemcpyDeviceToHost);
-  CheckCudaError("Error copying from device to host");
-  cudaMemcpy(hb_out, db_out, size, cudaMemcpyDeviceToHost);
-  CheckCudaError("Error copying from device to host");
 }
 
 // Free the device memory
-__host__ void FreeDeviceMemory(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out) {
-  cudaFree(dr_in);
-  CheckCudaError("Error freeing device memory for dr_in");
-  cudaFree(dg_in);
-  CheckCudaError("Error freeing device memory for dg_in");
-  cudaFree(db_in);
-  CheckCudaError("Error freeing device memory for db_in");
-  cudaFree(dr_out);
-  CheckCudaError("Error freeing device memory for dr_out");
-  cudaFree(dg_out);
-  CheckCudaError("Error freeing device memory for dg_out");
-  cudaFree(db_out);
-  CheckCudaError("Error freeing device memory for db_out");
+__host__ void FreeDeviceMemory(uchar * d_buf) {
+  cudaFree(d_buf);
 }
 
 __host__ void CleanUp() {
   cudaDeviceReset();
-  CheckCudaError("Error resetting device");
 }
 
 __host__ void Execute(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
@@ -217,7 +132,6 @@ __host__ void Execute(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, u
   dim3 block_size(TILE_DIM, TILE_DIM);
   dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
   Convert<<<grid_size, block_size>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height);
-  CheckCudaError("Error executing kernel");
   cudaDeviceSynchronize();
 }
 
@@ -254,11 +168,12 @@ void OnMouse(int event, int x, int y, int, void* userdata) {
 void DoJob(cv::Mat frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
            uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
            uchar* dr_out, uchar* dg_out, uchar* db_out) {
-  CopyFromHostToDevice(hr_in, hg_in, hb_in, dr_in, dg_in, db_in, width, height);
+
+  CopyFromHostToDevice(hr_in, hg_in, hb_in, dr_in, dg_in, db_in, num_pixels);
   CheckCudaError("Error copying from host to device");
   Execute(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height, blur_x, blur_y);
   CheckCudaError("Error executing kernel");
-  CopyFromDeviceToHost(dr_out, dg_out, db_out, hr_out, hg_out, hb_out, width, height);
+  CopyFromDeviceToHost(dr_out, dg_out, db_out, hr_out, hg_out, hb_out, num_pixels);
   CheckCudaError("Error copying from device to host");
 
   #pragma omp parallel for collapse(2)
@@ -299,6 +214,16 @@ int main(int argc, char** argv) {
   std::string modelConfiguration = "./models/deploy.prototxt";
   std::string modelWeights = "./models/res10_300x300_ssd_iter_140000.caffemodel";
   cv::dnn::Net net = cv::dnn::readNetFromCaffe(modelConfiguration, modelWeights);
+  try {
+    // Set DNN backend to CUDA
+    net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+    net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+    std::cout << "⚡ TensorRT not available, using CUDA backend" << std::endl;
+  } catch (const std::exception& e) {
+    net.setPreferableBackend(cv::dnn::DNN_BACKEND_OPENCV);
+    net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+    std::cout << "⚡ TensorRT not available, using CUDA backend" << std::endl;
+  }
 
   try {
     // Create a window to display the blurred image
@@ -313,6 +238,15 @@ int main(int argc, char** argv) {
       return -1;
     }
 
+    // Set 1080p resolution if using webcam
+    if (video_file_path == "0") {
+      cap.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
+      cap.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
+      cap.set(cv::CAP_PROP_FPS, 60);
+      cv::namedWindow("Blurred Image", cv::WINDOW_NORMAL);
+      cv::resizeWindow("Blurred Image", 1920, 1080);
+    }
+
     int width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
     int height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
     int frames = cap.get(cv::CAP_PROP_FPS);
@@ -320,25 +254,26 @@ int main(int argc, char** argv) {
 
     std::cout << "Width: " << width << " Height: " << height << " Frames: " << frames << std::endl;
 
+    uchar *h_buf, *d_buf;
+
     // Allocate device memory
     uchar *dr_in, *dg_in, *db_in, *dr_out, *dg_out, *db_out;
-    AllocateDeviceMemory(&dr_in, &dg_in, &db_in, &dr_out, &dg_out, &db_out, num_pixels);
+    AllocateDeviceMemory(&d_buf, &dr_in, &dg_in, &db_in, &dr_out, &dg_out, &db_out, num_pixels);
 
     // Allocate host memory
     uchar* hr_in; uchar* hg_in; uchar* hb_in; uchar* hr_out; uchar* hg_out; uchar* hb_out;
-    AllocateHostMemory(&hr_in, &hg_in, &hb_in, &hr_out, &hg_out, &hb_out, num_pixels);
+    AllocateHostMemory(&h_buf, &hr_in, &hg_in, &hb_in, &hr_out, &hg_out, &hb_out, num_pixels);
 
     cv::Mat frame;
 
     auto start = std::chrono::high_resolution_clock::now();
+    int fps_count = 0;
 
     while (true) {
       // Read the video frames
       if (!cap.read(frame)) {
         std::cerr << "Error: Unable to read video frame\n";
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        std::cout << "Time: " << duration.count() << " ms" << std::endl;
+        break;
       }
 
       // Flip the frame horizontally
@@ -376,7 +311,6 @@ int main(int argc, char** argv) {
 
             // If confidence is above a threshold, draw a rectangle around the face
             if (confidence > 0.5) {
-                std::cout << confidence << std::endl;
                 face_detected = true;
                 int x1 = static_cast<int>(data[i * numCoords + 3] * frame.cols);
                 int y1 = static_cast<int>(data[i * numCoords + 4] * frame.rows);
@@ -410,17 +344,30 @@ int main(int argc, char** argv) {
         }
 
       }
-      
+
+      ++fps_count;
+      auto end = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<double> elapsed = end - start;
+      if (elapsed.count() > 0.0) {
+        double fps = fps_count / elapsed.count();
+        std::string fps_text = "FPS: " + std::to_string(static_cast<int>(fps));
+        cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+        fps_count = 0;
+        start = std::chrono::high_resolution_clock::now();
+      }
+
       cv::imshow("Blurred Image", frame);
       cv::setMouseCallback("Blurred Image", OnMouse, &frame);
-      //std::cout << blur_x << " " << blur_y << std::endl;
       if (cv::waitKey(1000 / frames) == 27) break;
+
     }
 
-    // measure execution time
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Time: " << duration.count() << " ms" << std::endl;
+    FreeDeviceMemory(d_buf);
+    cudaFreeHost(h_buf);
+    CleanUp();
+    cap.release();
+    cv::destroyAllWindows();
+    return 0;
   } 
   
   catch (const std::exception& e) {
