@@ -14,10 +14,21 @@ struct KernelPerformance {
     double avg_fps;
     double total_time;
     int frame_count;
+    double smoothed_fps;  // Add this for EMA
     
     KernelPerformance(const std::string& n, BlurKernelFunc f) 
-        : name(n), function(f), avg_fps(0.0), total_time(0.0), frame_count(0) {}
+        : name(n), function(f), avg_fps(0.0), total_time(0.0), frame_count(0), smoothed_fps(0.0) {}
 };
+
+// Helper function for smooth FPS calculation using Exponential Moving Average
+double calculateSmoothedFPS(double current_fps, double& smoothed_fps, double alpha = 0.1) {
+    if (smoothed_fps == 0.0) {
+        smoothed_fps = current_fps;  // Initialize on first frame
+    } else {
+        smoothed_fps = alpha * current_fps + (1.0 - alpha) * smoothed_fps;
+    }
+    return smoothed_fps;
+}
 
 __host__ void CheckCudaError(const std::string& error_message) {
   cudaError_t err = cudaGetLastError();
@@ -175,7 +186,7 @@ void Blur_MultiStream(cv::Mat& frame, int width, int height, int frames, int num
   }
 }
 
-/*
+
 // CUB-optimized kernel with advanced block-level reductions
 void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
               uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
@@ -186,34 +197,35 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
     cudaStreamCreate(&streams[i]);
   }
 
-  // Use larger tiles for CUB optimization
-  dim3 block1(BLOCK_X, BLOCK_Y);
-  dim3 grid1((width + TILE_X - 1) / TILE_X, height);
-  size_t shmem1 = (TILE_X + 2 * BLUR_SIZE) * sizeof(uchar);
+  const int W = width;
+  const int H = height;
+  const int P = width;
+  size_t bytesI = W * H * sizeof(int);
 
-  dim3 blockY(1, TILE_X);
-  dim3 gridY( (width + blockY.x - 1)/blockY.x, (height + TILE_X - 1)/TILE_X );
-  size_t shmemY = (TILE_X + 2 * BLUR_SIZE) * sizeof(uchar);
-
-  int* tmp_r, *tmp_g, *tmp_b;
-  cudaMalloc(&tmp_r, num_pixels * sizeof(int));
-  cudaMalloc(&tmp_g, num_pixels * sizeof(int));
-  cudaMalloc(&tmp_b, num_pixels * sizeof(int));
-
+  int *d_hsum_r, *d_hsum_g, *d_hsum_b;
+  int *d_hcnt_r , *d_hcnt_g, *d_hcnt_b;
+  cudaMalloc(&d_hsum_r, bytesI);
+  cudaMalloc(&d_hsum_g, bytesI);
+  cudaMalloc(&d_hsum_b, bytesI);
+  cudaMalloc(&d_hcnt_r, bytesI);
+  cudaMalloc(&d_hcnt_g, bytesI);
+  cudaMalloc(&d_hcnt_b, bytesI);
+  
+  dim3 bh(128), gv(W, (H + bh.x * 8 - 1) / (bh.x * 8));
+  dim3 gh((W + (bh.x * 8 - 1)) / (bh.x * 8), H);
+  
   // Asynchronous operations for RGB channels using CUB kernel
   cudaMemcpyAsync(dr_in, hr_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[0]);
   cudaMemcpyAsync(dg_in, hg_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[1]);
   cudaMemcpyAsync(db_in, hb_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[2]);
 
-  // Launch CUB-optimized kernels
-  BoxBlurHorizontally<<<grid1, block1, shmem1, streams[0]>>>(dr_in, tmp_r, width, height);
-  BoxBlurVertically<<<gridY, blockY, shmemY, streams[0]>>>(tmp_r, dr_out, width, height);
+  BoxBlurHorizontal<BLUR_SIZE><<<gh, bh, 0, streams[0]>>>(dr_in, W, H, P, d_hsum_r, d_hcnt_r);
+  BoxBlurHorizontal<BLUR_SIZE><<<gh, bh, 0, streams[1]>>>(dg_in, W, H, P, d_hsum_g, d_hcnt_g);
+  BoxBlurHorizontal<BLUR_SIZE><<<gh, bh, 0, streams[2]>>>(db_in, W, H, P, d_hsum_b, d_hcnt_b);
 
-  BoxBlurHorizontally<<<grid1, block1, shmem1, streams[1]>>>(dg_in, tmp_g, width, height);
-  BoxBlurVertically<<<gridY, blockY, shmemY, streams[1]>>>(tmp_g, dg_out, width, height);
-
-  BoxBlurHorizontally<<<grid1, block1, shmem1, streams[2]>>>(db_in, tmp_b, width, height);
-  BoxBlurVertically<<<gridY, blockY, shmemY, streams[2]>>>(tmp_b, db_out, width, height);
+  BoxBlurVertical<BLUR_SIZE><<<gv, bh, 0, streams[0]>>>(d_hsum_r, d_hcnt_r, dr_in, dr_out, W, H, P);
+  BoxBlurVertical<BLUR_SIZE><<<gv, bh, 0, streams[1]>>>(d_hsum_g, d_hcnt_g, dg_in, dg_out, W, H, P);
+  BoxBlurVertical<BLUR_SIZE><<<gv, bh, 0, streams[2]>>>(d_hsum_b, d_hcnt_b, db_in, db_out, W, H, P);
 
   cudaMemcpyAsync(hr_out, dr_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, streams[0]);
   cudaMemcpyAsync(hg_out, dg_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, streams[1]);
@@ -226,9 +238,12 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
   }
 
   // Free temporary buffers
-  cudaFree(tmp_r);
-  cudaFree(tmp_g);
-  cudaFree(tmp_b);
+  cudaFree(d_hsum_r);
+  cudaFree(d_hsum_g);
+  cudaFree(d_hsum_b);
+  cudaFree(d_hcnt_r);
+  cudaFree(d_hcnt_g);
+  cudaFree(d_hcnt_b);
 
   // Update frame data
   #pragma omp parallel for collapse(2)
@@ -241,7 +256,7 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
     }
   }
 }
-*/
+
 
 // cuDNN-accelerated blur using optimized convolution operations
 /*
@@ -424,6 +439,7 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
   cv::Mat frame;
   auto start_time = std::chrono::high_resolution_clock::now();
   kernel.frame_count = 0;
+  kernel.smoothed_fps = 0.0;  // Reset smoothed FPS
   
   // Reset video to beginning for fair comparison
   cap.set(cv::CAP_PROP_POS_FRAMES, 0);
@@ -446,13 +462,16 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
     
     auto frame_end = std::chrono::high_resolution_clock::now();
     auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
-    double frame_fps = 1000000.0 / frame_duration.count();
+    double current_fps = 1000000.0 / frame_duration.count();
+    
+    // Calculate smoothed FPS for display
+    double display_fps = calculateSmoothedFPS(current_fps, kernel.smoothed_fps, 0.1);
     
     kernel.frame_count++;
     frame_number++;
     
-    // Add FPS text
-    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(frame_fps));
+    // Add smoothed FPS text
+    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(display_fps));
     cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
     cv::imshow("Kernel Testing", frame);
     cv::waitKey(1); // Allow OpenCV to update the display
@@ -467,6 +486,7 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
   std::cout << "Frames processed: " << kernel.frame_count << std::endl;
   std::cout << "Total time: " << kernel.total_time << " seconds" << std::endl;
   std::cout << "Average FPS: " << kernel.avg_fps << std::endl;
+  std::cout << "Final smoothed FPS: " << kernel.smoothed_fps << std::endl;
 }
 
 // Function to benchmark a specific kernel with webcam for a fixed duration
@@ -496,6 +516,7 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
   
   auto start_time = std::chrono::high_resolution_clock::now();
   kernel.frame_count = 0;
+  kernel.smoothed_fps = 0.0;  // Reset smoothed FPS
   
   while (true) {
     auto frame_start = std::chrono::high_resolution_clock::now();
@@ -525,16 +546,18 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
     
     kernel.frame_count++;
     
-    // Calculate per-frame FPS
     auto frame_end = std::chrono::high_resolution_clock::now();
     auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
-    double frame_fps = 1000000.0 / frame_duration.count();
+    double current_fps = 1000000.0 / frame_duration.count();
+    
+    // Calculate smoothed FPS for display
+    double display_fps = calculateSmoothedFPS(current_fps, kernel.smoothed_fps, 0.15); // Slightly more responsive for real-time
     
     // Display progress and current per-frame FPS
     double progress = (elapsed.count() / 1000.0) / test_duration;
     
     std::string progress_text = kernel.name + " - Progress: " + std::to_string(static_cast<int>(progress * 100)) + "%";
-    std::string fps_text = "Current FPS: " + std::to_string(static_cast<int>(frame_fps));
+    std::string fps_text = "Current FPS: " + std::to_string(static_cast<int>(display_fps));
     std::string time_text = "Time: " + std::to_string(static_cast<int>(elapsed.count() / 1000.0)) + "/" + std::to_string(static_cast<int>(test_duration)) + "s";
     
     cv::putText(frame, progress_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
@@ -563,6 +586,7 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
   std::cout << "Frames processed: " << kernel.frame_count << std::endl;
   std::cout << "Total time: " << kernel.total_time << " seconds" << std::endl;
   std::cout << "Average FPS: " << kernel.avg_fps << std::endl;
+  std::cout << "Final smoothed FPS: " << kernel.smoothed_fps << std::endl;
 }
 
 // Function to run interactive mode with selected kernel
@@ -577,7 +601,7 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
   std::cout << "Left click to enable blur (up to 3 faces), right click to disable, ESC to exit" << std::endl;
   
   cv::Mat frame;
-  double last_frame_fps = 0.0;
+  kernel.smoothed_fps = 0.0;  // Reset smoothed FPS
   
   while (true) {
     auto frame_start = std::chrono::high_resolution_clock::now();
@@ -598,19 +622,21 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
                      dr_in, dg_in, db_in, dr_out, dg_out, db_out);
     }
 
-    // Display FPS from previous frame (synchronized with visual content)
-    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(last_frame_fps));
+    auto frame_end = std::chrono::high_resolution_clock::now();
+    auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
+    double current_fps = 1000000.0 / frame_duration.count();
+    
+    // Calculate smoothed FPS for display
+    double display_fps = calculateSmoothedFPS(current_fps, kernel.smoothed_fps, 0.2); // More responsive for interactive mode
+
+    // Display smoothed FPS
+    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(display_fps));
     std::string faces_text = "Faces detected: " + std::to_string(*num_faces) + "/3";
     cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
     cv::putText(frame, faces_text, cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
 
     cv::imshow("Blurred Image", frame);
     cv::setMouseCallback("Blurred Image", OnMouse, &frame);
-    
-    // Calculate FPS for current frame (will be displayed in next frame)
-    auto frame_end = std::chrono::high_resolution_clock::now();
-    auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
-    last_frame_fps = 1000000.0 / frame_duration.count();
     
     int key = cv::waitKey(1);
     if (key == 27) break; // ESC key
@@ -668,8 +694,8 @@ int main(int argc, char** argv) {
   // Initialize available kernels
   std::vector<KernelPerformance> kernels = {
     KernelPerformance("Naive CUDA", Blur_Naive),
-    KernelPerformance("Multi-Stream CUDA", Blur_MultiStream)
-    // KernelPerformance("CUB Optimized", Blur_CUB)  // Temporarily commented out
+    KernelPerformance("Multi-Stream CUDA", Blur_MultiStream),
+    KernelPerformance("CUB Optimized", Blur_CUB)
     // KernelPerformance("cuDNN Optimized", Blur_cuDNN)  // Commented out
   };
 

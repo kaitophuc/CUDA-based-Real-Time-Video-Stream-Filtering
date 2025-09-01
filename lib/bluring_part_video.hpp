@@ -156,116 +156,192 @@ __global__ void Convert_MultiStream(uchar* d_in, uchar* d_out, int width, int he
 
 //==========================================================================//
 // CUB-optimized kernel with simplified approach for better performance
-constexpr int BLOCK_X = 128;
-constexpr int BLOCK_Y = 1;
-constexpr int TILE_X = BLOCK_X;
+template<int R, int BLOCK_THREADS = 128, int ITEMS_PER_THREAD = 8>
+__global__ void BoxBlurHorizontal(
+    const uchar* d_in,
+    int width, int height, int pitch,
+    int *hsum, int *hcount)
+{
+  using BlockLoad = cub::BlockLoad<uchar, BLOCK_THREADS, ITEMS_PER_THREAD, cub::BLOCK_LOAD_VECTORIZE>;
+  using BlockStore = cub::BlockStore<int, BLOCK_THREADS, ITEMS_PER_THREAD, cub::BLOCK_STORE_VECTORIZE>;
+  using BlockScan = cub::BlockScan<int, BLOCK_THREADS>;
 
-// Idea is to sequentially blur horizontally and then vertically
+  constexpr int TILE = BLOCK_THREADS * ITEMS_PER_THREAD;
+  int row  = blockIdx.y;
+  if (row >= height) return;
+  int x0 = blockIdx.x * TILE;
+  int valid = max(0, min(TILE, width - x0));
 
-__global__ void BoxBlurHorizontally(const uchar* d_in, int* tmp, int width, int height) {
-    const int y = blockIdx.y;
-    const int tile_tart = blockIdx.x * TILE_X;
-    const int x = tile_tart + threadIdx.x;
+  __shared__ union {
+    typename BlockLoad::TempStorage load;
+    typename BlockStore::TempStorage store;
+    typename BlockScan::TempStorage scan;
+  } temp_storage;
 
-    if (y >= height) return;
+  uchar in_items[ITEMS_PER_THREAD];
+  const uchar* row_ptr = d_in + row * pitch + x0;
+  BlockLoad(temp_storage.load).Load(row_ptr, in_items, valid);
+  __syncthreads();
 
-    extern __shared__ int s_data[];
-    int* sh_row = s_data;
+  int vals[ITEMS_PER_THREAD];
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    int x = threadIdx.x * ITEMS_PER_THREAD + i;
+    vals[i] = (x < valid) ? int(in_items[i]) : 0;
+  }
+  BlockScan(temp_storage.scan).InclusiveSum(vals, vals);
+  __syncthreads();
 
-    if (threadIdx.x < TILE_X + 2 * BLUR_SIZE) {
-        int gx = tile_tart + threadIdx.x - BLUR_SIZE;
-        gx = max(0, min(gx, width - 1)); 
-        int val = (y >= 0 && y < height && gx >= 0 && gx < width) ? d_in[y * width + gx] : 0;
-        sh_row[threadIdx.x] = val;
+  __shared__ int prefix[TILE + 1];
+  if (threadIdx.x == 0) prefix[0] = 0;
+  __syncthreads();
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    int x = threadIdx.x * ITEMS_PER_THREAD + i;
+    if (x < valid) {
+      prefix[x + 1] = vals[i];
     }
-    __syncthreads();
+  }
+  __syncthreads();
 
-    // Use CUB to perform block-wide sum reduction
-    using BlockScan = cub::BlockScan<int, TILE_X + 2 * BLUR_SIZE>;
-    __shared__ typename BlockScan::TempStorage temp_storage;
-
-    int v = 0;
-    if (threadIdx.x < TILE_X + 2 * BLUR_SIZE) {
-        v = sh_row[threadIdx.x];
-    }
-
-    int prefix_sum = 0;
-    BlockScan(temp_storage).InclusiveSum(v, prefix_sum);
-    if (threadIdx.x < TILE_X + 2 * BLUR_SIZE) {
-        sh_row[threadIdx.x] = prefix_sum;
-    }
-    __syncthreads();
-
-    if (threadIdx.x < TILE_X && x < width) {
-        const int i_center = threadIdx.x + BLUR_SIZE;
-        const int i_left = i_center - BLUR_SIZE - 1;
-        int sum = sh_row[min(i_center + BLUR_SIZE, TILE_X + 2 * BLUR_SIZE - 1)];
-        if (i_left >= 0) {
-            sum -= sh_row[i_left];
+  int sum_out[ITEMS_PER_THREAD];
+  int count_out[ITEMS_PER_THREAD];
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    int x_local = threadIdx.x * ITEMS_PER_THREAD + i;
+    int x_global = x0 + x_local;
+    if (x_local < valid) {
+      int left = max(0, x_global - R);
+      int right = min(width - 1, x_global + R);
+      int L = max(0, left - x0);
+      int R_ = min(valid - 1, right - x0);
+      int sum = 0;
+      if (L <= R_) {
+        sum = prefix[R_ + 1] - prefix[L];
+      } 
+      for (int c = left; c < x0; c++) {
+        sum += d_in[row * pitch + c];
+      }
+      for (int c = x0 + valid; c <= right; c++) {
+        if (c < width) {
+          sum += d_in[row * pitch + c];
         }
-        tmp[y * width + x] = sum;
+      }
+      int cnt = right - left + 1;
+      sum_out[i] = sum;
+      count_out[i] = cnt;
     }
+  }
+  BlockStore(temp_storage.store).Store(hsum + row * pitch + x0, sum_out, valid);
+  __syncthreads();
+  BlockStore(temp_storage.store).Store(hcount + row * pitch + x0, count_out, valid);
 }
 
-__global__ void BoxBlurVertically(const int* tmp, uchar* d_out, int width, int height) {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int tile_start = blockIdx.y * TILE_X;
-    const int y = tile_start + threadIdx.y;
+template<int R, int BLOCK_THREADS = 128, int ITEMS_PER_THREAD = 8>
+__global__ void BoxBlurVertical(
+    const int* hsum,
+    const int* hcount,
+    const uchar* d_in,
+    uchar* d_out,
+    int width, int height, int pitch)
+{
+  using BlockScan = cub::BlockScan<int, BLOCK_THREADS>;
+  constexpr int TILE = BLOCK_THREADS * ITEMS_PER_THREAD;
 
-    if (x >= width) return;
+  int col = blockIdx.x;
+  int y0 = blockIdx.y * TILE;
+  int valid = max(0, min(TILE, height - y0));
+  if (col >= width) return;
 
-    extern __shared__ int s_data[];
-    int* sh_col = s_data;
+  __shared__ typename BlockScan::TempStorage scan1, scan2;
+  __shared__ int prefix_sum[TILE + 1];
+  __shared__ int prefix_count[TILE + 1];
+  if (threadIdx.x == 0) {
+    prefix_sum[0] = 0;
+    prefix_count[0] = 0;
+  }
+  __syncthreads();
 
-    if (threadIdx.y < TILE_X + 2 * BLUR_SIZE) {
-        int gy = tile_start + threadIdx.y - BLUR_SIZE;
-        gy = max(0, min(gy, height - 1)); 
-        int val = (gy >= 0 && gy < height && x >= 0 && x < width) ? tmp[gy * width + x] : 0;
-        sh_col[threadIdx.y] = val;
+  int vals_sum[ITEMS_PER_THREAD];
+  int vals_count[ITEMS_PER_THREAD];
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    int y_local = threadIdx.x * ITEMS_PER_THREAD + i;
+    int y_global = y0 + y_local;
+    if (y_local < valid) {
+      vals_sum[i] = hsum[y_global * pitch + col];
+      vals_count[i] = hcount[y_global * pitch + col];
     }
-    __syncthreads();
-
-    // Use CUB to perform block-wide sum reduction
-    using BlockScan = cub::BlockScan<int, TILE_X + 2 * BLUR_SIZE>;
-    __shared__ typename BlockScan::TempStorage temp_storage;
-
-    int v = 0;
-    if (threadIdx.y < TILE_X + 2 * BLUR_SIZE) {
-        v = sh_col[threadIdx.y];
+    else {
+      vals_sum[i] = 0;
+      vals_count[i] = 0;
     }
-
-    int prefix_sum = 0;
-    BlockScan(temp_storage).InclusiveSum(v, prefix_sum);
-    if (threadIdx.y < TILE_X + 2 * BLUR_SIZE) {
-        sh_col[threadIdx.y] = prefix_sum;
+  }
+  BlockScan(scan1).InclusiveSum(vals_sum, vals_sum);
+  __syncthreads();
+  BlockScan(scan2).InclusiveSum(vals_count, vals_count);
+  __syncthreads();
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    int y_local = threadIdx.x * ITEMS_PER_THREAD + i;
+    if (y_local < valid) {
+      prefix_sum[y_local + 1] = vals_sum[i];
+      prefix_count[y_local + 1] = vals_count[i];
     }
-    __syncthreads();
+  }
+  __syncthreads();
 
-    if (threadIdx.y < TILE_X && y < height) {
-        const int i_center = threadIdx.y + BLUR_SIZE;
-        const int i_top = i_center - BLUR_SIZE - 1;
-        int sum = sh_col[min(i_center + BLUR_SIZE, TILE_X + 2 * BLUR_SIZE - 1)];
-        if (i_top >= 0) {
-            sum -= sh_col[i_top];
+  int nfaces = min(*num_faces, MAX_FACES);
+  int cx0 = (nfaces > 0) ? blur_x[0] : -1;
+  int cy0 = (nfaces > 0) ? blur_y[0] : -1;
+  int r0 = (nfaces > 0) ? distance[0] : -1;
+  
+  #pragma unroll
+  for (int i = 0; i < ITEMS_PER_THREAD; i++) {
+    int y_local = threadIdx.x * ITEMS_PER_THREAD + i;
+    int y_global = y0 + y_local;
+    if (y_local < valid) {
+      int top = max(0, y_global - R);
+      int bottom = min(height - 1, y_global + R);
+      int T = max(0, top - y0);
+      int B = min(valid - 1, bottom - y0);
+      int sum = 0;
+      int count = 0;
+      if (T <= B) {
+        sum = prefix_sum[B + 1] - prefix_sum[T];
+        count = prefix_count[B + 1] - prefix_count[T];
+      }
+      for (int r = top; r < y0; r++) {
+        sum += hsum[r * pitch + col];
+        count += hcount[r * pitch + col];
+      }
+      for (int r = y0 + valid; r <= bottom; r++) {
+        if (r < height) {
+          sum += hsum[r * pitch + col];
+          count += hcount[r * pitch + col];
         }
-        
-        const int area = (2 * BLUR_SIZE + 1) * (2 * BLUR_SIZE + 1);
-        int blurred_val = sum / area;
+      }
+      int avg = (count > 0) ? (sum / count) : int(d_in[y_global * pitch + col]);
 
-        // Check if pixel is within any of the detected faces
-        bool should_blur = false;
-        for (int face_idx = 0; face_idx < *num_faces && face_idx < MAX_FACES; face_idx++) {
-          const int dx = x - blur_x[face_idx];
-          const int dy = y - blur_y[face_idx];
+      bool should_blur = false;
+      if (nfaces == 1) {
+        int dx = col - cx0;
+        int dy = y_global - cy0;
+        should_blur = (dx * dx + dy * dy <= r0 * r0);
+      } else {
+        #pragma unroll
+        for (int face_idx = 0; face_idx < nfaces; face_idx++) {
+          int dx = col - blur_x[face_idx];
+          int dy = y_global - blur_y[face_idx];
           if (dx * dx + dy * dy <= distance[face_idx] * distance[face_idx]) {
             should_blur = true;
             break;
           }
         }
-        
-        uchar orig = static_cast<uchar>(tmp[y * width + x] / (2 * BLUR_SIZE + 1)); // Original pixel value
-        d_out[y * width + x] = should_blur ? static_cast<uchar>(blurred_val) : orig;
+      }
+      d_out[y_global * pitch + col] = should_blur ? static_cast<uchar>(avg) : d_in[y_global * pitch + col];
     }
+  }
 }
 
 //==========================================================================//

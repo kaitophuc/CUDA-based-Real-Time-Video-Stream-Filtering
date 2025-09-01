@@ -2,363 +2,216 @@
 
 ## Overview
 
-This project leverages **CUDA** technology to apply real-### Video File Testing (Recommended)
+This project implements CUDA-accelerated face detection and blurring for real-time video processing. It compares three different CUDA kernel implementations for selective blurring of detected faces in video streams or webcam feeds.
 
-For the most accurate performance comparison without camera limitations:
-
-```bash
-# Test all kernels with your video file
-./run.sh data/your_video.mp4 test
-
-# Interactive mode with video file
-./run.sh data/your_video.mp4 interactive
-
-# Add video files to data directory
-mkdir -p data
-cp your_video.mp4 data/
-
-# Use the interactive menu and select "Recorded Video (Kernel Testing)"
-./run.sh
-# Then choose option 5
-```
-
-## 🎯 **Command-Line Usage for Video Testing**
-
-### **Basic Commands**
-```bash
-# Test all 4 kernels with video file (best for performance comparison)
-./run.sh data/input.mp4 test
-
-# Interactive mode with video file
-./run.sh data/input.mp4 interactive
-
-# Benchmark mode: test all then run best kernel
-./run.sh data/input.mp4 benchmark
-```
-
-### **Setup Video Files**
-```bash
-# Create data directory
-mkdir -p data
-
-# Add your video file
-cp your_video.mp4 data/
-
-# Supported formats: MP4, AVI, MOV, MKV (anything OpenCV supports)
-```
-
-## Overview
-
-This project leverages **CUDA** technology to apply real-time blurring to specified regions of video frames with automatic **face detection**. The primary objective is to demonstrate how **GPU acceleration** can be used for video processing tasks like selective blurring, useful in various scenarios such as privacy masking, content filtering, or artistic effects.
-
-Developed as part of a final assignment for a Coursera course, this project showcases the efficiency of **GPU computing** in handling large-scale data operations, particularly for time-sensitive applications like real-time video editing. The project features **four advanced CUDA kernel implementations** including CUB and cuDNN optimizations for comprehensive performance comparison and analysis.
-
-## Key Features
-
-- **Real-time face detection** using OpenCV's DNN module with SSD MobileNet
-- **Four advanced CUDA kernel implementations** for comprehensive performance comparison
-- **CUB library integration** for optimized warp-level reductions and block operations
-- **cuDNN library support** for neural network-inspired optimizations
-- **Comprehensive benchmarking framework** with multiple testing modes
-- **Interactive and automated testing modes** with video file support
-- **Webcam and video file support** for flexible input sources
-- **GPU-accelerated blurring** with stream-based parallel RGB processing
-- **Memory-optimized CUDA operations** with proper cleanup and error handling
+The project features automatic face detection using OpenCV's DNN module with SSD MobileNet and applies GPU-accelerated blur effects to detected facial regions. Multiple CUDA kernel implementations are available for performance comparison and educational purposes.
 
 ## Project Structure
 
 ```
-├── data/               # Video files and test datasets
-│   └── input.mp4      # Sample video file
+├── data/               # Video files for testing
+│   └── input.mp4      # Sample video files
 ├── src/               # Source code
-│   └── bluring_part_video.cu  # Main CUDA implementation with 4 kernels
+│   └── bluring_part_video.cu  # Main CUDA implementation
 ├── lib/               # Header files and CUDA kernels
-│   └── bluring_part_video.hpp # CUDA kernel implementations (CUB, cuDNN)
+│   └── bluring_part_video.hpp # CUDA kernel implementations
 ├── bin/               # Compiled binaries
 ├── models/            # AI models for face detection
 │   ├── deploy.prototxt
 │   ├── res10_300x300_ssd_iter_140000.caffemodel
 │   └── shape_predictor_68_face_landmarks.dat
-├── Makefile          # Build configuration with cuDNN support
-└── run.sh            # Comprehensive execution script with testing capabilities
+├── Makefile          # Build configuration
+└── run.sh            # Execution script
 ```
 
 ## Available CUDA Kernels
 
-The project implements **four different kernel variants** for comprehensive performance comparison:
+The project implements three different CUDA kernel variants for performance comparison:
 
 ### 1. **Naive CUDA Kernel**
-- Basic CUDA implementation with simple memory management
-- Uses full blur kernel size (BLUR_SIZE = 30)
-- Standard shared memory tiling for cache optimization
-- RGB channel processing with basic CUDA streams
+- Single kernel launch processing all RGB channels together
+- Uses shared memory tiling (32x32 tiles)
+- Sequential memory transfers
+- Blur radius: 128 pixels
 
-### 2. **Optimized CUDA Kernel**
-- Enhanced stream management for better concurrency
-- Improved memory access patterns and coalescing
-- Optimized data transfer operations between host and device
-- Better resource utilization with asynchronous operations
+### 2. **Multi-Stream CUDA Kernel**
+- Three separate kernel launches (one per RGB channel)
+- Uses three CUDA streams for parallel processing
+- Supports up to 3 faces simultaneously
+- Per-channel blur processing with shared memory
 
-### 3. **CUB-Optimized Kernel**
-- **NVIDIA CUB library integration** for advanced primitives
-- **Warp-level reduction operations** for efficient averaging
-- **Block-level optimizations** with shared memory management
-- **Reduced blur kernel size** (BLUR_SIZE/2 = 15) for performance
-- Early exit optimization for pixels outside blur region
+### 3. **CUB Optimized Kernel**
+- Uses NVIDIA CUB library for optimized block operations
+- Separable box blur (horizontal + vertical passes)
+- Advanced grid configurations for better occupancy
+- Reduced memory allocations with temporary buffers
 
-### 4. **cuDNN-Optimized Kernel**
-- **Neural network-inspired optimization patterns**
-- **Advanced memory access patterns** similar to convolution operations
-- **Enhanced streaming capabilities** for maximum throughput
-- **Smallest blur kernel** (BLUR_SIZE/3 = 10) for maximum performance
-- GPU memory bandwidth optimization techniques
+## Features
 
-## Kernel Performance Testing Framework
+- **Real-time face detection** using OpenCV's DNN module
+- **GPU-accelerated blurring** with multiple kernel implementations
+- **Multi-face support** (up to 3 faces simultaneously)
+- **Performance benchmarking** framework with FPS measurement
+- **Webcam and video file support**
+- **Interactive testing modes**
+- **Exponential moving average** for smooth FPS display
 
-### Usage Modes
+## Usage Modes
 
-#### Quick Start
+### Quick Start
 ```bash
 # Build the project
 make build
 
-# Interactive mode selection (recommended for beginners)
-./run.sh
+# Interactive mode (choose kernel)
+./run.sh 0 interactive
 
-# Direct execution with webcam benchmark
-./run.sh 0 webcam_benchmark
-
-# Test all kernels with video file (eliminates camera FPS bottleneck)
+# Test all kernels with video file
 ./run.sh data/input.mp4 test
 
-# Build and run webcam benchmark
-./run.sh --build 0 webcam_benchmark
-
-# Show all available options
-./run.sh --help
+# Benchmark with webcam
+./run.sh 0 webcam_benchmark
 ```
 
-#### Available Modes
+### Available Modes
 
 **Test Mode (`test`)**
-- Tests all four kernels with 100 frames from video file
-- Shows comprehensive performance comparison table
-- Identifies the best performing kernel
-- **Recommended for accurate performance measurement** (eliminates camera FPS limits)
+- Tests all kernels with entire video file
+- Processes all frames for comprehensive comparison
+- Outputs performance summary table
 
 **Interactive Mode (`interactive`)**
-- Choose which of the four kernels to use for real-time processing
-- Real-time face detection and blurring
+- Choose specific kernel for real-time processing
 - Left click to enable blur, right click to disable
-- ESC to exit, supports both webcam and video file input
+- ESC to exit
 
 **Webcam Benchmark Mode (`webcam_benchmark`)**
-- Tests all four kernels with live webcam feed
-- 10-second benchmark per kernel with countdown and progress display
-- Real-time FPS measurement and comparison
+- 10-second benchmark per kernel
+- Real-time progress display
 - Automatic best kernel identification
 
 **Benchmark Mode (`benchmark`)**
-- Tests all kernels then runs the best performing one interactively
-- Combines testing and interactive modes for optimal experience
+- Tests all kernels then runs best one interactively
 
-### Video File Testing (Recommended)
-
-For the most accurate performance comparison without camera limitations:
+### Command Line Usage
 
 ```bash
-# Test all kernels with your video file
-./run.sh data/your_video.mp4 test
+# Usage pattern
+./run.sh <video_source> <mode>
 
-# Interactive mode with video file
-./run.sh data/your_video.mp4 interactive
-
-# Add video files to data directory
-mkdir -p data
-cp your_video.mp4 data/
-
-# Use the interactive menu and select "Recorded Video (Kernel Testing)"
-./run.sh
-# Then choose option 5
+# Examples
+./run.sh 0 interactive                    # Webcam interactive
+./run.sh data/video.mp4 test             # Video file testing
+./run.sh 0 webcam_benchmark              # Webcam benchmarking
 ```
 
-### Performance Metrics
+## Performance Metrics
 
 The framework measures:
-- **Average FPS**: Frames processed per second for each kernel
-- **Total Time**: Total processing time in seconds
-- **Frame Count**: Number of frames processed during test
-- **Memory Usage**: CUDA memory allocation efficiency
-- **Kernel Comparison**: Side-by-side performance analysis
-
-### Example Performance Results
-
-```
-=== KERNEL PERFORMANCE COMPARISON ===
-         Kernel Name        Avg FPS     Total Time
---------------------------------------------------
-          Naive CUDA          45.23          2.21s
-      Optimized CUDA          52.67          1.90s
-       CUB Optimized          68.45          1.46s
-     cuDNN Optimized          71.89          1.39s
-
-Best performing kernel: cuDNN Optimized (71.89 FPS)
-Performance improvement over naive: 59.0%
-```
+- **Average FPS**: Overall frames per second
+- **Total Time**: Complete processing duration
+- **Frame Count**: Number of frames processed
+- **Smoothed FPS**: Exponential moving average for display
 
 ## Dependencies
 
-- **CUDA Toolkit** (11.0 or higher)
-- **OpenCV 4.x** with DNN module support and CUDA backend
+- **CUDA Toolkit** (11.0+)
+- **OpenCV 4.x** with DNN module
 - **OpenMP** for CPU parallelization
-- **CUB Library** (included with CUDA Toolkit 11.0+)
-- **cuDNN Library** (8.0 or higher) for neural network optimizations
-- **CMake** or **Make** for building
-- **GCC/G++** compiler with C++20 support
-
-## Prerequisites
-
-Before building and running the project, ensure the following are installed:
-
-1. **NVIDIA GPU** with CUDA capability 3.5 or higher
-2. **CUDA Toolkit**: Download from [NVIDIA's CUDA Toolkit page](https://developer.nvidia.com/cuda-toolkit)
-3. **cuDNN Library**: Download from [NVIDIA's cuDNN page](https://developer.nvidia.com/cudnn) (requires free account)
-4. **OpenCV**: Install with CUDA support enabled for optimal DNN performance
-5. **OpenMP**: Usually included with GCC
-6. **Webcam** (optional, for live testing)
+- **CUB Library** (included with CUDA 11.0+)
+- **cuDNN** (optional, for advanced optimizations)
 
 ## Build Instructions
 
 ### Linux/Ubuntu
 
 ```bash
-# Clone the repository
+# Install dependencies
+sudo apt update
+sudo apt install libopencv-dev libopencv-contrib-dev
+
+# Clone and build
 git clone <repository-url>
 cd project_CUDA_based_Real_Time_Video_Stream_Filtering
-
-# Make the run script executable
-chmod +x run.sh
-
-# Build and run with interactive mode selection
-./run.sh --build --interactive
-
-# Or build manually and run specific mode
 make build
-./run.sh 0 webcam_benchmark
+
+# Run with webcam
+./run.sh 0 interactive
 ```
-
-### Windows (using WSL)
-
-1. Install Windows Subsystem for Linux (WSL2)
-2. Install CUDA toolkit in WSL
-3. Follow the Linux instructions above
-
-## Advanced Usage
-
-### Adding New Kernels
-
-To implement and test a new kernel:
-
-1. **Implement the CUDA kernel function** in `lib/bluring_part_video.hpp`:
-```cpp
-__global__ void Convert_YourKernel(uchar* d_in, uchar* d_out, int width, int height) {
-    // Your CUDA kernel implementation
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    // ... kernel logic
-}
-```
-
-2. **Implement the wrapper function** in `src/bluring_part_video.cu`:
-```cpp
-void Blur_YourKernel(cv::Mat& frame, int width, int height, int frames, int num_pixels,
-                     uchar* hr_in, uchar* hg_in, uchar* hb_in, 
-                     uchar* hr_out, uchar* hg_out, uchar* hb_out,
-                     uchar* dr_in, uchar* dg_in, uchar* db_in, 
-                     uchar* dr_out, uchar* dg_out, uchar* db_out) {
-    // Setup streams, launch kernel, handle memory transfers
-}
-```
-
-3. **Add it to the kernels vector** in main():
-```cpp
-std::vector<KernelPerformance> kernels = {
-    KernelPerformance("Naive CUDA", Blur_Naive),
-    KernelPerformance("Optimized CUDA", Blur_Optimized),
-    KernelPerformance("CUB Optimized", Blur_CUB),
-    KernelPerformance("cuDNN Optimized", Blur_cuDNN),
-    KernelPerformance("Your Kernel", Blur_YourKernel)  // Add here
-};
-```
-
-### Kernel Development Tips
-
-1. **Use CUDA streams** for parallel RGB channel processing (see existing implementations)
-2. **Optimize memory access patterns** for better coalescing and bandwidth utilization
-3. **Consider shared memory** for frequently accessed data (see CUB implementation)
-4. **Implement early exit optimizations** for pixels outside the blur region
-5. **Use CUB primitives** for warp-level and block-level reductions
-6. **Profile with nvprof/nsight** for detailed performance analysis
-7. **Test with different resolutions** to understand scalability characteristics
-8. **Implement proper error checking** for robust operation and debugging
-
-### Performance Optimization Techniques
-
-- **Memory Management**: Use pinned memory for faster host-device transfers
-- **Stream Processing**: Asynchronous RGB channel operations for parallel execution
-- **Kernel Launch Parameters**: Optimize block and grid sizes for your GPU architecture
-- **Memory Coalescing**: Ensure optimal memory access patterns for bandwidth efficiency
-- **Occupancy**: Balance threads per block with register usage and shared memory
-- **Warp Efficiency**: Minimize warp divergence and maximize warp utilization
-- **CUB Integration**: Use NVIDIA CUB for optimized device-wide primitives
-- **cuDNN Patterns**: Adopt neural network optimization techniques for memory access
 
 ## Technical Implementation
 
 ### Face Detection Pipeline
-1. **Frame Capture**: OpenCV VideoCapture for input
-2. **DNN Processing**: SSD MobileNet for face detection
-3. **Coordinate Extraction**: Bounding box calculation
-4. **CUDA Processing**: GPU-accelerated blur application
-5. **Frame Display**: Real-time visualization
+1. Frame capture via OpenCV VideoCapture
+2. DNN inference using SSD MobileNet (300x300 input)
+3. Confidence filtering (>0.5) and coordinate extraction
+4. Top 3 faces selected by confidence score
+5. CUDA kernel application for selective blurring
 
 ### Memory Architecture
-- **Unified Memory**: Simplified CPU-GPU data sharing for blur coordinates
-- **Pinned Host Memory**: Faster data transfers between host and device
-- **Device Memory**: GPU global memory for RGB channel processing
-- **Shared Memory**: Block-level cache for improved memory bandwidth
-- **Stream Management**: Asynchronous operations for RGB channels
-- **CUB Temp Storage**: Optimized temporary storage for reduction operations
+- **Unified Memory**: Face coordinates and detection data
+- **Pinned Host Memory**: Faster CPU-GPU transfers
+- **Device Memory**: RGB channel processing buffers
+- **Shared Memory**: Block-level cache (32x32 tiles)
 
-## Troubleshooting
+### CUDA Implementation Details
+- **Block Size**: 32x32 threads per block
+- **Memory Transfers**: Asynchronous for RGB channels  
+- **Blur Algorithm**: Box filter with configurable radius
+- **Stream Management**: Single stream (Naive) vs. Triple stream (Multi-Stream)
 
-### Common Issues
+## Controls
 
-**Build Errors:**
-- Ensure CUDA toolkit is properly installed (11.0+ required)
-- Check OpenCV installation and CUDA support enabled
-- Verify cuDNN library installation and proper linking
-- Check compiler compatibility (GCC 9+ recommended)
-- Ensure CUB library is available (included with CUDA 11.0+)
+### Interactive Mode
+- **Left Click**: Enable blur at clicked position
+- **Right Click**: Disable all blur effects
+- **ESC**: Exit application
 
-**Runtime Issues:**
-- Check webcam permissions and availability
-- Verify model files are present in `models/` directory
-- Ensure sufficient GPU memory (4GB+ recommended for 1080p)
-- Check that GPU supports the required CUDA capability (3.5+)
+### Face Detection Mode
+- Automatic detection of up to 3 faces
+- Blur applied to circular regions around face centers
+- Real-time bounding box visualization
 
-**Performance Issues:**
-- Monitor GPU memory usage with `nvidia-smi`
-- Check for thermal throttling (GPU temperature)
-- Verify optimal block/grid sizes for your specific GPU architecture
-- Use video file testing to eliminate camera FPS bottlenecks
-- Profile with nvprof or Nsight for detailed kernel analysis
+## Performance Results
 
-### Memory Management
-The project implements robust memory cleanup:
-- Automatic resource deallocation
-- Stream synchronization before cleanup
-- Proper error handling for CUDA operations
-- Prevention of memory leaks
+Actual benchmark results from running the project on a video file (2999 frames, 1920x1080 @ 29 FPS):
 
-This project demonstrates the effectiveness of GPU acceleration for real-time video processing tasks, with emphasis on advanced CUDA optimization techniques including CUB primitives and cuDNN-inspired patterns for maximum performance.
+```
+=== KERNEL PERFORMANCE COMPARISON ===
+
+=== Testing Kernel: Naive CUDA ===
+Processing entire video...
+Frames processed: 2999
+Total time: 55.516 seconds
+Average FPS: 54.0205
+Final smoothed FPS: 50.0818
+
+=== Testing Kernel: Multi-Stream CUDA ===
+Processing entire video...
+Frames processed: 2999
+Total time: 78.334 seconds
+Average FPS: 38.2848
+Final smoothed FPS: 33.3488
+
+=== Testing Kernel: CUB Optimized ===
+Processing entire video...
+Frames processed: 2999
+Total time: 36.518 seconds
+Average FPS: 82.1239
+Final smoothed FPS: 102.523
+
+=== PERFORMANCE SUMMARY ===
+         Kernel Name        Avg FPS     Total Time
+--------------------------------------------------
+          Naive CUDA          54.02          55.52s
+   Multi-Stream CUDA          38.28          78.33s
+       CUB Optimized          82.12          36.52s
+
+Best performing kernel: CUB Optimized (82.12 FPS)
+```
+
+**Key Findings:**
+- **CUB Optimized** performs best with 82.12 FPS (52% faster than Naive)
+- **Multi-Stream CUDA** is actually slower than Naive due to stream overhead
+- **Naive CUDA** provides good baseline performance at 54.02 FPS
+- Processing a 1080p video with face detection and blurring in real-time
