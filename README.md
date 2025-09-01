@@ -2,49 +2,92 @@
 
 ## Overview
 
-This project implements CUDA-accelerated face detection and blurring for real-time video processing. It compares three different CUDA kernel implementations for selective blurring of detected faces in video streams or webcam feeds.
+This project implements CUDA-accelerated face detection and blurring for real-time video processing. It features a **modular architecture** that separates each CUDA kernel implementation into dedicated files, making the codebase more maintainable and easier to understand. The project compares three different CUDA kernel implementations for selective blurring of detected faces in video streams or webcam feeds.
 
 The project features automatic face detection using OpenCV's DNN module with SSD MobileNet and applies GPU-accelerated blur effects to detected facial regions. Multiple CUDA kernel implementations are available for performance comparison and educational purposes.
 
-## Project Structure
+## Modular Project Structure
+
+The codebase has been reorganized into a modular architecture where each blur kernel is implemented in separate files:
 
 ```
 ├── data/               # Video files for testing
 │   └── input.mp4      # Sample video files
-├── src/               # Source code
-│   └── bluring_part_video.cu  # Main CUDA implementation
-├── lib/               # Header files and CUDA kernels
-│   └── bluring_part_video.hpp # CUDA kernel implementations
+├── src/               # Source code (modular organization)
+│   ├── bluring_part_video.cu    # Main application orchestrator
+│   ├── blur_common.cu           # Common utilities and functions
+│   ├── blur_naive.cu            # Naive CUDA kernel implementation
+│   ├── blur_multistream.cu      # Multi-stream CUDA implementation
+│   └── blur_cub.cu              # CUB optimized implementation
+├── lib/               # Header files (modular organization)
+│   ├── blur_common.hpp          # Common definitions and utilities
+│   ├── blur_naive.hpp           # Naive kernel declarations
+│   ├── blur_multistream.hpp     # Multi-stream kernel declarations
+│   └── blur_cub.hpp             # CUB kernel declarations
 ├── bin/               # Compiled binaries
 ├── models/            # AI models for face detection
 │   ├── deploy.prototxt
 │   ├── res10_300x300_ssd_iter_140000.caffemodel
 │   └── shape_predictor_68_face_landmarks.dat
-├── Makefile          # Build configuration
+├── Makefile          # Updated build configuration for modular build
 └── run.sh            # Execution script
 ```
 
+## Modular Architecture Benefits
+
+### 1. **Separation of Concerns**
+- Each blur kernel is implemented in its own dedicated file
+- Common functionality is centralized in `blur_common.cu/hpp`
+- Main application focuses on orchestration and user interface
+
+### 2. **Maintainability**
+- Easy to modify individual kernels without affecting others
+- Clear separation between kernel implementations and common utilities
+- Simplified debugging and testing of specific components
+
+### 3. **Extensibility**
+- New blur kernels can be added by creating new files and updating the kernel vector
+- Common functions are reusable across all implementations
+- Consistent interface for all kernel implementations
+
+### 4. **Educational Value**
+- Each kernel implementation can be studied independently
+- Clear comparison between different CUDA programming techniques
+- Modular structure makes it easier to understand complex CUDA concepts
+
 ## Available CUDA Kernels
 
-The project implements three different CUDA kernel variants for performance comparison:
+The project implements three different CUDA kernel variants, each in its own file:
 
-### 1. **Naive CUDA Kernel**
-- Single kernel launch processing all RGB channels together
-- Uses shared memory tiling (32x32 tiles)
-- Sequential memory transfers
-- Blur radius: 128 pixels
+### 1. **Naive CUDA Kernel** (`src/blur_naive.cu`)
+- **Architecture**: Single kernel launch processing all RGB channels together
+- **Memory Management**: Sequential memory transfers with single stream
+- **Optimization**: Uses shared memory tiling (32x32 tiles)
+- **Blur Method**: Box filter with 128-pixel radius
+- **Use Case**: Baseline implementation for comparison
 
-### 2. **Multi-Stream CUDA Kernel**
-- Three separate kernel launches (one per RGB channel)
-- Uses three CUDA streams for parallel processing
-- Supports up to 3 faces simultaneously
-- Per-channel blur processing with shared memory
+### 2. **Multi-Stream CUDA Kernel** (`src/blur_multistream.cu`)
+- **Architecture**: Three separate kernel launches (one per RGB channel)
+- **Memory Management**: Uses three CUDA streams for parallel processing
+- **Optimization**: Asynchronous memory transfers with stream parallelism
+- **Multi-Face Support**: Processes up to 3 faces simultaneously
+- **Use Case**: Demonstrates stream parallelism benefits
 
-### 3. **CUB Optimized Kernel**
-- Uses NVIDIA CUB library for optimized block operations
-- Separable box blur (horizontal + vertical passes)
-- Advanced grid configurations for better occupancy
-- Reduced memory allocations with temporary buffers
+### 3. **CUB Optimized Kernel** (`src/blur_cub.cu`)
+- **Architecture**: Uses NVIDIA CUB library for optimized block operations
+- **Memory Management**: Separable box blur (horizontal + vertical passes)
+- **Optimization**: Advanced grid configurations and block-level reductions
+- **Performance**: Reduced memory allocations with temporary buffers
+- **Use Case**: High-performance production implementation
+
+## Common Utilities (`src/blur_common.cu`)
+
+The common utilities module provides shared functionality:
+- **Memory Management**: Host and device memory allocation functions
+- **Face Detection**: OpenCV DNN integration with SSD MobileNet
+- **Performance Measurement**: FPS calculation with exponential moving average
+- **Video Processing**: Frame reading and processing utilities
+- **Testing Framework**: Kernel benchmarking and interactive modes
 
 ## Features
 
@@ -55,6 +98,7 @@ The project implements three different CUDA kernel variants for performance comp
 - **Webcam and video file support**
 - **Interactive testing modes**
 - **Exponential moving average** for smooth FPS display
+- **Modular architecture** for easy maintenance and extension
 
 ## Usage Modes
 
@@ -141,6 +185,25 @@ make build
 
 ## Technical Implementation
 
+### Modular Architecture Details
+
+#### **Main Application** (`src/bluring_part_video.cu`)
+- Orchestrates all kernel implementations
+- Handles command-line argument parsing
+- Manages memory allocation and cleanup
+- Provides user interface for kernel selection
+
+#### **Common Utilities** (`src/blur_common.cu`)
+- Face detection pipeline with OpenCV DNN
+- Memory management for host and device
+- Performance measurement and FPS calculation
+- Video capture and frame processing utilities
+
+#### **Kernel Implementations**
+- **Naive**: `src/blur_naive.cu` - Simple single-kernel approach
+- **Multi-Stream**: `src/blur_multistream.cu` - Stream parallelism
+- **CUB Optimized**: `src/blur_cub.cu` - Advanced CUB operations
+
 ### Face Detection Pipeline
 1. Frame capture via OpenCV VideoCapture
 2. DNN inference using SSD MobileNet (300x300 input)
@@ -215,3 +278,35 @@ Best performing kernel: CUB Optimized (82.12 FPS)
 - **Multi-Stream CUDA** is actually slower than Naive due to stream overhead
 - **Naive CUDA** provides good baseline performance at 54.02 FPS
 - Processing a 1080p video with face detection and blurring in real-time
+
+## Development Notes
+
+### Adding New Kernels
+
+To add a new blur kernel implementation:
+
+1. **Create header file**: `lib/blur_newkernel.hpp`
+```cpp
+#ifndef BLUR_NEWKERNEL_HPP
+#define BLUR_NEWKERNEL_HPP
+#include "blur_common.hpp"
+
+void Blur_NewKernel(cv::Mat& frame, int width, int height, int frames, int num_pixels, 
+                   uchar* hr_in, uchar* hg_in, uchar* hb_in, 
+                   uchar* hr_out, uchar* hg_out, uchar* hb_out,
+                   uchar* dr_in, uchar* dg_in, uchar* db_in, 
+                   uchar* dr_out, uchar* dg_out, uchar* db_out);
+
+#endif
+```
+
+2. **Create implementation file**: `src/blur_newkernel.cu`
+3. **Update main application**: Add include and register kernel
+4. **Update Makefile**: Add new source file to build process
+
+### Debugging Tips
+
+- Use `CheckCudaError()` after CUDA operations for error checking
+- Enable debug prints in common utilities for tracing execution
+- Use NVIDIA Nsight Systems for performance profiling
+- Each kernel can be tested independently in interactive mode
