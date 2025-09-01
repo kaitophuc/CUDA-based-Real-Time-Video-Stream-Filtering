@@ -56,8 +56,6 @@ __host__ void AllocateDeviceMemory(uchar** d_buf, uchar** dr_in, uchar** dg_in, 
 // Read the image from the file and store it in the host memory
 __host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total, uchar* hb_total,
                                 int width, int height) {
-  int num_pixels = width * height;
-
   #pragma omp parallel for collapse(2)
   for (int i = 0; i < height; i++) {
     for (int j = 0; j < width; j++) {
@@ -71,7 +69,6 @@ __host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total
 
 // Mouse callback function to get the coordinates of the mouse click
 void OnMouse(int event, int x, int y, int, void* userdata) {
-  cv::Mat* image = reinterpret_cast<cv::Mat*>(userdata);
   if (event == cv::EVENT_LBUTTONDOWN) {
     *blur_x = x;
     *blur_y = y;
@@ -83,6 +80,9 @@ void OnMouse(int event, int x, int y, int, void* userdata) {
   }
 }
 
+// Actually this kernel should be more optimized because the orders of functions are sorted to 
+// Overlapped Memory Access and Compute. But somehow, the performance is not as expected.
+// Even worse than the naive version, which transfers and computes sequentially.
 void Blur_Naive(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
            uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
            uchar* dr_out, uchar* dg_out, uchar* db_out) {
@@ -127,7 +127,8 @@ void Blur_Naive(cv::Mat& frame, int width, int height, int frames, int num_pixel
   }
 }
 
-// Optimized kernel with shared memory
+// Optimized kernel with shared memory. Somehow, the performance is even better than 
+// the naive version with overlapped memory access and compute.
 void Blur_Optimized(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
                    uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
                    uchar* dr_out, uchar* dg_out, uchar* db_out) {
@@ -182,8 +183,18 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
   }
 
   // Use larger tiles for CUB optimization
-  dim3 block_size(TILE_DIM, TILE_DIM);
-  dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
+  dim3 block1(BLOCK_X, BLOCK_Y);
+  dim3 grid1((width + TILE_X - 1) / TILE_X, height);
+  size_t shmem1 = (TILE_X + 2 * BLUR_SIZE) * sizeof(uchar);
+
+  dim3 blockY(1, TILE_X);
+  dim3 gridY( (width + blockY.x - 1)/blockY.x, (height + TILE_X - 1)/TILE_X );
+  size_t shmemY = (TILE_X + 2 * BLUR_SIZE) * sizeof(uchar);
+
+  int* tmp_r, *tmp_g, *tmp_b;
+  cudaMalloc(&tmp_r, num_pixels * sizeof(int));
+  cudaMalloc(&tmp_g, num_pixels * sizeof(int));
+  cudaMalloc(&tmp_b, num_pixels * sizeof(int));
 
   // Asynchronous operations for RGB channels using CUB kernel
   cudaMemcpyAsync(dr_in, hr_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[0]);
@@ -191,9 +202,14 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
   cudaMemcpyAsync(db_in, hb_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[2]);
 
   // Launch CUB-optimized kernels
-  Convert_CUB<<<grid_size, block_size, 0, streams[0]>>>(dr_in, dr_out, width, height);
-  Convert_CUB<<<grid_size, block_size, 0, streams[1]>>>(dg_in, dg_out, width, height);
-  Convert_CUB<<<grid_size, block_size, 0, streams[2]>>>(db_in, db_out, width, height);
+  BoxBlurHorizontally<<<grid1, block1, shmem1, streams[0]>>>(dr_in, tmp_r, width, height);
+  BoxBlurVertically<<<gridY, blockY, shmemY, streams[0]>>>(tmp_r, dr_out, width, height);
+
+  BoxBlurHorizontally<<<grid1, block1, shmem1, streams[1]>>>(dg_in, tmp_g, width, height);
+  BoxBlurVertically<<<gridY, blockY, shmemY, streams[1]>>>(tmp_g, dg_out, width, height);
+
+  BoxBlurHorizontally<<<grid1, block1, shmem1, streams[2]>>>(db_in, tmp_b, width, height);
+  BoxBlurVertically<<<gridY, blockY, shmemY, streams[2]>>>(tmp_b, db_out, width, height);
 
   cudaMemcpyAsync(hr_out, dr_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, streams[0]);
   cudaMemcpyAsync(hg_out, dg_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, streams[1]);
@@ -218,6 +234,7 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
 }
 
 // cuDNN-accelerated blur using optimized convolution operations
+/*
 void Blur_cuDNN(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
                 uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
                 uchar* dr_out, uchar* dg_out, uchar* db_out) {
@@ -264,6 +281,7 @@ void Blur_cuDNN(cv::Mat& frame, int width, int height, int frames, int num_pixel
     }
   }
 }
+*/
   
 
 // Function to initialize video capture
@@ -397,14 +415,10 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
     
     kernel.frame_count++;
     
-    // Display every 10th frame for visual feedback
-    if (i % 10 == 0) {
-      // Add FPS text
-      std::string fps_text = kernel.name + " - Frame " + std::to_string(i) + " - FPS: " + std::to_string(static_cast<int>(frame_fps));
-      cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
-      cv::imshow("Kernel Testing", frame);
-      cv::waitKey(1);
-    }
+    // Add FPS text
+    std::string fps_text = kernel.name + " - Frame " + std::to_string(i) + " - FPS: " + std::to_string(static_cast<int>(frame_fps));
+    cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
+    cv::imshow("Kernel Testing", frame);
   }
   
   auto end_time = std::chrono::high_resolution_clock::now();
@@ -447,6 +461,7 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
   kernel.frame_count = 0;
   
   while (true) {
+    auto frame_start = std::chrono::high_resolution_clock::now();
     auto current_time = std::chrono::high_resolution_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - start_time);
     
@@ -473,12 +488,16 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
     
     kernel.frame_count++;
     
-    // Display progress and current FPS
+    // Calculate per-frame FPS
+    auto frame_end = std::chrono::high_resolution_clock::now();
+    auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
+    double frame_fps = 1000000.0 / frame_duration.count();
+    
+    // Display progress and current per-frame FPS
     double progress = (elapsed.count() / 1000.0) / test_duration;
-    double current_fps = kernel.frame_count / (elapsed.count() / 1000.0);
     
     std::string progress_text = kernel.name + " - Progress: " + std::to_string(static_cast<int>(progress * 100)) + "%";
-    std::string fps_text = "Current FPS: " + std::to_string(static_cast<int>(current_fps));
+    std::string fps_text = "Current FPS: " + std::to_string(static_cast<int>(frame_fps));
     std::string time_text = "Time: " + std::to_string(static_cast<int>(elapsed.count() / 1000.0)) + "/" + std::to_string(static_cast<int>(test_duration)) + "s";
     
     cv::putText(frame, progress_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
@@ -521,8 +540,7 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
   std::cout << "Left click to enable blur, right click to disable, ESC to exit" << std::endl;
   
   cv::Mat frame;
-  auto start = std::chrono::high_resolution_clock::now();
-  int fps_count = 0;
+  double last_frame_fps = 0.0;
   
   while (true) {
     auto frame_start = std::chrono::high_resolution_clock::now();
@@ -543,20 +561,17 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
                      dr_in, dg_in, db_in, dr_out, dg_out, db_out);
     }
 
-    // Calculate and display FPS
-    ++fps_count;
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsed = end - start;
-    if (elapsed.count() > 1.0) {
-      double fps = fps_count / elapsed.count();
-      std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(fps));
-      cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
-      fps_count = 0;
-      start = std::chrono::high_resolution_clock::now();
-    }
+    // Display FPS from previous frame (synchronized with visual content)
+    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(last_frame_fps));
+    cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
 
     cv::imshow("Blurred Image", frame);
     cv::setMouseCallback("Blurred Image", OnMouse, &frame);
+    
+    // Calculate FPS for current frame (will be displayed in next frame)
+    auto frame_end = std::chrono::high_resolution_clock::now();
+    auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
+    last_frame_fps = 1000000.0 / frame_duration.count();
     
     int key = cv::waitKey(1);
     if (key == 27) break; // ESC key
@@ -572,7 +587,7 @@ int main(int argc, char** argv) {
   // Initialize variables
   *blur_x = -1;
   *blur_y = -1;
-  *distance = 100;
+  *distance = DISTANCE;
 
   // Read the video file path from the command line
   if (argc < 2) {
@@ -611,8 +626,8 @@ int main(int argc, char** argv) {
   std::vector<KernelPerformance> kernels = {
     KernelPerformance("Naive CUDA", Blur_Naive),
     KernelPerformance("Optimized CUDA", Blur_Optimized),
-    KernelPerformance("CUB Optimized", Blur_CUB),
-    KernelPerformance("cuDNN Optimized", Blur_cuDNN)
+    KernelPerformance("CUB Optimized", Blur_CUB)
+    // KernelPerformance("cuDNN Optimized", Blur_cuDNN)  // Commented out
   };
 
   try {

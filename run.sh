@@ -52,14 +52,6 @@ build_project() {
     echo ""
 }
 
-# Function to check if binary exists
-check_binary() {
-    if [ ! -f "./bin/bluring_part_video.exe" ]; then
-        echo "Binary not found. Building project..."
-        build_project
-    fi
-}
-
 # Function to interactive mode selection
 interactive_selection() {
     echo "Choose execution mode:"
@@ -172,8 +164,8 @@ if [ "$BUILD_FLAG" = true ]; then
     build_project
 fi
 
-# Check if binary exists
-check_binary
+# Always build the project
+build_project
 
 # If interactive flag is set or no arguments provided, show interactive menu
 if [ "$INTERACTIVE_FLAG" = true ] || [ $# -eq 0 ]; then

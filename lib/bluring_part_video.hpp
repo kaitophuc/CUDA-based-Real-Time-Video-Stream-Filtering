@@ -26,10 +26,9 @@
 // cuDNN includes for neural network accelerated operations
 #include <cudnn.h>
 
-#define BLUR_SIZE 30
+#define BLUR_SIZE 128
 #define TILE_DIM 32
-#define FILTER_RADIUS 10
-//#define DISTANCE 100
+#define DISTANCE 100
 
 __managed__ int *blur_x;
 __managed__ int *blur_y;
@@ -39,7 +38,6 @@ bool enable = true;
 __global__ void Convert_Naive(uchar* d_in, uchar* d_out, int width, int height) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
-  int num_pixels = width * height;
   // Shared memory for the input image. Use for tiling the image to avoid bank conflicts.
   __shared__ uchar d_in_shared[TILE_DIM][TILE_DIM];
   if (col < width && row < height) {
@@ -80,73 +78,113 @@ __global__ void Convert_Naive(uchar* d_in, uchar* d_out, int width, int height) 
   }
 }
 
+//==========================================================================//
 // CUB-optimized kernel with simplified approach for better performance
-__global__ void Convert_CUB(uchar* d_in, uchar* d_out, int width, int height) {
-  int col = blockIdx.x * blockDim.x + threadIdx.x;
-  int row = blockIdx.y * blockDim.y + threadIdx.y;
-  
-  if (col >= width || row >= height) return;
-  
-  // Check if pixel is within blur circle first (early exit optimization)
-  int dx = col - *blur_x;
-  int dy = row - *blur_y;
-  
-  if (dx * dx + dy * dy > (*distance) * (*distance)) {
-    d_out[row * width + col] = d_in[row * width + col];
-    return;
-  }
-  
-  // Shared memory for the input tile
-  __shared__ uchar tile[TILE_DIM][TILE_DIM];
-  
-  // Load data into shared memory
-  if (threadIdx.x < TILE_DIM && threadIdx.y < TILE_DIM) {
-    tile[threadIdx.y][threadIdx.x] = d_in[row * width + col];
-  }
-  __syncthreads();
-  
-  // Calculate blur using reduced sampling for performance
-  int pix_sum = 0;
-  int pixel_count = 0;
-  
-  // Use smaller blur kernel for CUB version to improve performance
-  const int cub_blur_size = BLUR_SIZE / 2; // Reduce blur size for speed
-  
-  for (int f_row = -cub_blur_size; f_row <= cub_blur_size; f_row++) {
-    for (int f_col = -cub_blur_size; f_col <= cub_blur_size; f_col++) {
-      int sample_row = row + f_row;
-      int sample_col = col + f_col;
-      
-      if (sample_row >= 0 && sample_row < height && sample_col >= 0 && sample_col < width) {
-        // Use shared memory when possible, global memory otherwise
-        int tile_row = threadIdx.y + f_row;
-        int tile_col = threadIdx.x + f_col;
-        
-        if (tile_row >= 0 && tile_row < TILE_DIM && tile_col >= 0 && tile_col < TILE_DIM) {
-          pix_sum += tile[tile_row][tile_col];
-        } else {
-          pix_sum += d_in[sample_row * width + sample_col];
-        }
-        pixel_count++;
-      }
+constexpr int BLOCK_X = 128;
+constexpr int BLOCK_Y = 1;
+constexpr int TILE_X = BLOCK_X;
+
+// Idea is to sequentially blur horizontally and then vertically
+
+__global__ void BoxBlurHorizontally(const uchar* d_in, int* tmp, int width, int height) {
+    const int y = blockIdx.y;
+    const int tile_tart = blockIdx.x * TILE_X;
+    const int x = tile_tart + threadIdx.x;
+
+    if (y >= height) return;
+
+    extern __shared__ int s_data[];
+    int* sh_row = s_data;
+
+    if (threadIdx.x < TILE_X + 2 * BLUR_SIZE) {
+        int gx = tile_tart + threadIdx.x - BLUR_SIZE;
+        gx = max(0, min(gx, width - 1)); 
+        int val = (y >= 0 && y < height && gx >= 0 && gx < width) ? d_in[y * width + gx] : 0;
+        sh_row[threadIdx.x] = val;
     }
-  }
-  
-  // Apply CUB warp-level shuffle for efficient averaging within warps
-  typedef cub::WarpReduce<int> WarpReduce;
-  __shared__ typename WarpReduce::TempStorage temp_storage;
-  
-  // Get warp-level averages
-  int warp_sum = WarpReduce(temp_storage).Sum(pix_sum);
-  int warp_count = WarpReduce(temp_storage).Sum(pixel_count);
-  
-  // Each thread calculates its own result
-  if (pixel_count > 0) {
-    d_out[row * width + col] = static_cast<uchar>(pix_sum / pixel_count);
-  } else {
-    d_out[row * width + col] = d_in[row * width + col];
-  }
+    __syncthreads();
+
+    // Use CUB to perform block-wide sum reduction
+    using BlockScan = cub::BlockScan<int, TILE_X + 2 * BLUR_SIZE>;
+    __shared__ typename BlockScan::TempStorage temp_storage;
+
+    int v = 0;
+    if (threadIdx.x < TILE_X + 2 * BLUR_SIZE) {
+        v = sh_row[threadIdx.x];
+    }
+
+    int prefix_sum = 0;
+    BlockScan(temp_storage).InclusiveSum(v, prefix_sum);
+    if (threadIdx.x < TILE_X + 2 * BLUR_SIZE) {
+        sh_row[threadIdx.x] = prefix_sum;
+    }
+    __syncthreads();
+
+    if (threadIdx.x < TILE_X && x < width) {
+        const int i_center = threadIdx.x + BLUR_SIZE;
+        const int i_left = i_center - BLUR_SIZE - 1;
+        int sum = sh_row[min(i_center + BLUR_SIZE, TILE_X + 2 * BLUR_SIZE - 1)];
+        if (i_left >= 0) {
+            sum -= sh_row[i_left];
+        }
+        tmp[y * width + x] = sum;
+    }
 }
+
+__global__ void BoxBlurVertically(const int* tmp, uchar* d_out, int width, int height) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int tile_start = blockIdx.y * TILE_X;
+    const int y = tile_start + threadIdx.y;
+
+    if (x >= width) return;
+
+    extern __shared__ int s_data[];
+    int* sh_col = s_data;
+
+    if (threadIdx.y < TILE_X + 2 * BLUR_SIZE) {
+        int gy = tile_start + threadIdx.y - BLUR_SIZE;
+        gy = max(0, min(gy, height - 1)); 
+        int val = (gy >= 0 && gy < height && x >= 0 && x < width) ? tmp[gy * width + x] : 0;
+        sh_col[threadIdx.y] = val;
+    }
+    __syncthreads();
+
+    // Use CUB to perform block-wide sum reduction
+    using BlockScan = cub::BlockScan<int, TILE_X + 2 * BLUR_SIZE>;
+    __shared__ typename BlockScan::TempStorage temp_storage;
+
+    int v = 0;
+    if (threadIdx.y < TILE_X + 2 * BLUR_SIZE) {
+        v = sh_col[threadIdx.y];
+    }
+
+    int prefix_sum = 0;
+    BlockScan(temp_storage).InclusiveSum(v, prefix_sum);
+    if (threadIdx.y < TILE_X + 2 * BLUR_SIZE) {
+        sh_col[threadIdx.y] = prefix_sum;
+    }
+    __syncthreads();
+
+    if (threadIdx.y < TILE_X && y < height) {
+        const int i_center = threadIdx.y + BLUR_SIZE;
+        const int i_top = i_center - BLUR_SIZE - 1;
+        int sum = sh_col[min(i_center + BLUR_SIZE, TILE_X + 2 * BLUR_SIZE - 1)];
+        if (i_top >= 0) {
+            sum -= sh_col[i_top];
+        }
+        
+        const int area = (2 * BLUR_SIZE + 1) * (2 * BLUR_SIZE + 1);
+        int blurred_val = sum / area;
+
+        const int dx = x - *blur_x;
+        const int dy = y - *blur_y;
+        const bool in_circle = (dx * dx + dy * dy <= (*distance) * (*distance));
+        uchar orig = static_cast<uchar>(tmp[y * width + x] / (2 * BLUR_SIZE + 1)); // Original pixel value
+        d_out[y * width + x] = in_circle ? static_cast<uchar>(blurred_val) : orig;
+    }
+}
+
+//==========================================================================//
 
 // Helper function to check cuDNN errors
 #define CHECK_CUDNN(call) do { \
