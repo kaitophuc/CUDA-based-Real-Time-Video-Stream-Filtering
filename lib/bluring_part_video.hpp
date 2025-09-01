@@ -29,13 +29,77 @@
 #define BLUR_SIZE 128
 #define TILE_DIM 32
 #define DISTANCE 100
+#define MAX_FACES 3
 
 __managed__ int *blur_x;
 __managed__ int *blur_y;
 __managed__ int *distance;
+__managed__ int *num_faces;
 bool enable = true;
 
-__global__ void Convert_Naive(uchar* d_in, uchar* d_out, int width, int height) {
+__global__ void Convert_Naive(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* dr_out, uchar* dg_out, uchar* db_out, 
+                        int width, int height) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  // Shared memory for the input image. Use for tiling the image to avoid bank conflicts.
+  __shared__ uchar dr_in_shared[TILE_DIM][TILE_DIM];
+  __shared__ uchar dg_in_shared[TILE_DIM][TILE_DIM];
+  __shared__ uchar db_in_shared[TILE_DIM][TILE_DIM];
+  
+  if (col < width && row < height) {
+    dr_in_shared[threadIdx.y][threadIdx.x] = dr_in[row * width + col];
+    dg_in_shared[threadIdx.y][threadIdx.x] = dg_in[row * width + col];
+    db_in_shared[threadIdx.y][threadIdx.x] = db_in[row * width + col];
+  } else {
+    dr_in_shared[threadIdx.y][threadIdx.x] = 0;
+    dg_in_shared[threadIdx.y][threadIdx.x] = 0;
+    db_in_shared[threadIdx.y][threadIdx.x] = 0;
+  }
+
+  __syncthreads();
+
+  if (col < width && row < height) {
+    if ((col - *blur_x) * (col - *blur_x) + (row - *blur_y) * (row - *blur_y) <= (*distance) * (*distance)) {
+      int pix_val_r = 0;
+      int pix_val_g = 0;
+      int pix_val_b = 0;
+      int pixels = 0;
+
+      // Get the average of the surrounding pixels
+      for (int f_row = -BLUR_SIZE; f_row <= BLUR_SIZE; f_row++) {
+        for (int f_col = -BLUR_SIZE; f_col <= BLUR_SIZE; f_col++) {
+          int tile_row = threadIdx.y + f_row;
+          int tile_col = threadIdx.x + f_col;
+          if (tile_row >= 0 && tile_row < TILE_DIM && tile_col >= 0 && tile_col < TILE_DIM) {
+            pix_val_r += dr_in_shared[tile_row][tile_col];
+            pix_val_g += dg_in_shared[tile_row][tile_col];
+            pix_val_b += db_in_shared[tile_row][tile_col];
+            ++pixels;
+          } else {
+            int i = row + f_row;
+            int j = col + f_col;
+            if (i >= 0 && i < height && j >= 0 && j < width) {
+              pix_val_r += dr_in[i * width + j];
+              pix_val_g += dg_in[i * width + j];
+              pix_val_b += db_in[i * width + j];
+              ++pixels;
+            }
+          }
+        }
+      }
+
+      dr_out[row * width + col] = static_cast<uchar>(pix_val_r / pixels);
+      dg_out[row * width + col] = static_cast<uchar>(pix_val_g / pixels);
+      db_out[row * width + col] = static_cast<uchar>(pix_val_b / pixels);
+    } else {
+      dr_out[row * width + col] = dr_in[row * width + col];
+      dg_out[row * width + col] = dg_in[row * width + col];
+      db_out[row * width + col] = db_in[row * width + col];
+    }
+  }
+}
+
+__global__ void Convert_MultiStream(uchar* d_in, uchar* d_out, int width, int height) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   // Shared memory for the input image. Use for tiling the image to avoid bank conflicts.
@@ -48,7 +112,19 @@ __global__ void Convert_Naive(uchar* d_in, uchar* d_out, int width, int height) 
   __syncthreads();
 
   if (col < width && row < height) {
-    if ((col - *blur_x) * (col - *blur_x) + (row - *blur_y) * (row - *blur_y) <= (*distance) * (*distance)) {
+    bool should_blur = false;
+    
+    // Check if pixel is within any of the detected faces
+    for (int face_idx = 0; face_idx < *num_faces && face_idx < MAX_FACES; face_idx++) {
+      int dx = col - blur_x[face_idx];
+      int dy = row - blur_y[face_idx];
+      if (dx * dx + dy * dy <= distance[face_idx] * distance[face_idx]) {
+        should_blur = true;
+        break;
+      }
+    }
+    
+    if (should_blur) {
       int pix_val = 0;
       int pixels = 0;
 
@@ -176,15 +252,63 @@ __global__ void BoxBlurVertically(const int* tmp, uchar* d_out, int width, int h
         const int area = (2 * BLUR_SIZE + 1) * (2 * BLUR_SIZE + 1);
         int blurred_val = sum / area;
 
-        const int dx = x - *blur_x;
-        const int dy = y - *blur_y;
-        const bool in_circle = (dx * dx + dy * dy <= (*distance) * (*distance));
+        // Check if pixel is within any of the detected faces
+        bool should_blur = false;
+        for (int face_idx = 0; face_idx < *num_faces && face_idx < MAX_FACES; face_idx++) {
+          const int dx = x - blur_x[face_idx];
+          const int dy = y - blur_y[face_idx];
+          if (dx * dx + dy * dy <= distance[face_idx] * distance[face_idx]) {
+            should_blur = true;
+            break;
+          }
+        }
+        
         uchar orig = static_cast<uchar>(tmp[y * width + x] / (2 * BLUR_SIZE + 1)); // Original pixel value
-        d_out[y * width + x] = in_circle ? static_cast<uchar>(blurred_val) : orig;
+        d_out[y * width + x] = should_blur ? static_cast<uchar>(blurred_val) : orig;
     }
 }
 
 //==========================================================================//
+
+// CUB-optimized kernel that uses the same multi-face logic
+__global__ void Convert_CUB(uchar* d_in, uchar* d_out, int width, int height) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  
+  if (col >= width || row >= height) return;
+  
+  // Check if pixel is within any of the detected faces
+  bool should_blur = false;
+  for (int face_idx = 0; face_idx < *num_faces && face_idx < MAX_FACES; face_idx++) {
+    int dx = col - blur_x[face_idx];
+    int dy = row - blur_y[face_idx];
+    if (dx * dx + dy * dy <= distance[face_idx] * distance[face_idx]) {
+      should_blur = true;
+      break;
+    }
+  }
+  
+  if (should_blur) {
+    // Simple blur for CUB version
+    int pix_val = 0;
+    int pixels = 0;
+    int blur_radius = min(BLUR_SIZE, 16); // Use smaller radius for performance
+    
+    for (int f_row = -blur_radius; f_row <= blur_radius; f_row++) {
+      for (int f_col = -blur_radius; f_col <= blur_radius; f_col++) {
+        int i = row + f_row;
+        int j = col + f_col;
+        if (i >= 0 && i < height && j >= 0 && j < width) {
+          pix_val += d_in[i * width + j];
+          ++pixels;
+        }
+      }
+    }
+    d_out[row * width + col] = static_cast<uchar>(pix_val / pixels);
+  } else {
+    d_out[row * width + col] = d_in[row * width + col];
+  }
+}
 
 // Helper function to check cuDNN errors
 #define CHECK_CUDNN(call) do { \
@@ -204,11 +328,18 @@ __global__ void Convert_cuDNN_PostProcess(float* d_float_out, uchar* d_out, int 
   
   int idx = row * width + col;
   
-  // Check if pixel is within blur circle
-  int dx = col - *blur_x;
-  int dy = row - *blur_y;
+  // Check if pixel is within any of the detected faces
+  bool should_blur = false;
+  for (int face_idx = 0; face_idx < *num_faces && face_idx < MAX_FACES; face_idx++) {
+    int dx = col - blur_x[face_idx];
+    int dy = row - blur_y[face_idx];
+    if (dx * dx + dy * dy <= distance[face_idx] * distance[face_idx]) {
+      should_blur = true;
+      break;
+    }
+  }
   
-  if (dx * dx + dy * dy <= (*distance) * (*distance)) {
+  if (should_blur) {
     // Use cuDNN processed result (clamped to 0-255 range)
     float val = d_float_out[channel_offset + idx];
     d_out[idx] = static_cast<uchar>(fmaxf(0.0f, fminf(255.0f, val)));

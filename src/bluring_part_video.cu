@@ -70,66 +70,69 @@ __host__ void ReadImageFromFile(cv::Mat* image, uchar* hr_total, uchar* hg_total
 // Mouse callback function to get the coordinates of the mouse click
 void OnMouse(int event, int x, int y, int, void* userdata) {
   if (event == cv::EVENT_LBUTTONDOWN) {
-    *blur_x = x;
-    *blur_y = y;
-    enable = true;
+    // Add a new face position (up to MAX_FACES)
+    if (*num_faces < MAX_FACES) {
+      blur_x[*num_faces] = x;
+      blur_y[*num_faces] = y;
+      (*num_faces)++;
+      enable = true;
+    }
   } else if (event == cv::EVENT_RBUTTONDOWN) {
-    *blur_x = -1;
-    *blur_y = -1;
+    // Clear all face positions
+    *num_faces = 0;
+    for (int i = 0; i < MAX_FACES; i++) {
+      blur_x[i] = -1;
+      blur_y[i] = -1;
+    }
     enable = false;
   }
 }
 
-// Actually this kernel should be more optimized because the orders of functions are sorted to 
-// Overlapped Memory Access and Compute. But somehow, the performance is not as expected.
-// Even worse than the naive version, which transfers and computes sequentially.
+// Naive kernel that processes all RGB channels in a single kernel launch
+// Uses sequential memory transfers but only one kernel launch
 void Blur_Naive(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
            uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
            uchar* dr_out, uchar* dg_out, uchar* db_out) {
 
-  cudaStream_t compute_r, compute_g, compute_b;
-  cudaStreamCreate(&compute_r);
-  cudaStreamCreate(&compute_g);
-  cudaStreamCreate(&compute_b);
+  cudaStream_t stream;
+  cudaStreamCreate(&stream);
 
   dim3 block_size(TILE_DIM, TILE_DIM);
   dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
 
-  // Copy the input image to the device memory
-  cudaMemcpyAsync(dr_in, hr_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, compute_r);
-  Convert_Naive<<<grid_size, block_size, 0, compute_r>>>(dr_in, dr_out, width, height);
-  cudaMemcpyAsync(dg_in, hg_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, compute_g);
-  cudaMemcpyAsync(hr_out, dr_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, compute_r);
-  Convert_Naive<<<grid_size, block_size, 0, compute_g>>>(dg_in, dg_out, width, height);
-  cudaMemcpyAsync(db_in, hb_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, compute_b);
-  cudaMemcpyAsync(hg_out, dg_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, compute_g);
-  Convert_Naive<<<grid_size, block_size, 0, compute_b>>>(db_in, db_out, width, height);
-  cudaMemcpyAsync(hb_out, db_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, compute_b);
+  // Transfer all RGB channels to device
+  cudaMemcpyAsync(dr_in, hr_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, stream);
+  cudaMemcpyAsync(dg_in, hg_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, stream);
+  cudaMemcpyAsync(db_in, hb_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, stream);
 
-  cudaStreamSynchronize(compute_r);
-  cudaStreamSynchronize(compute_g);
-  cudaStreamSynchronize(compute_b);
+  // Single kernel launch processes all RGB channels together
+  Convert_Naive<<<grid_size, block_size, 0, stream>>>(dr_in, dg_in, db_in, dr_out, dg_out, db_out, width, height);
+
+  // Transfer all RGB channels back to host
+  cudaMemcpyAsync(hr_out, dr_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, stream);
+  cudaMemcpyAsync(hg_out, dg_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, stream);
+  cudaMemcpyAsync(hb_out, db_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, stream);
+
+  cudaStreamSynchronize(stream);
   
-  // Cleanup streams
-  cudaStreamDestroy(compute_r);
-  cudaStreamDestroy(compute_g);
-  cudaStreamDestroy(compute_b);
+  // Cleanup stream
+  cudaStreamDestroy(stream);
 
+  // Update frame data
   #pragma omp parallel for collapse(2)
   for (int i = 0; i < height; i++) {
     for (int j = 0; j < width; j++) {
-      cv::Vec3b pixel;
+      cv::Vec3b& pixel = frame.at<cv::Vec3b>(i, j);
       pixel[2] = hr_out[i * width + j];
       pixel[1] = hg_out[i * width + j];
       pixel[0] = hb_out[i * width + j];
-      frame.at<cv::Vec3b>(i, j) = pixel;
     }
   }
 }
 
 // Optimized kernel with shared memory. Somehow, the performance is even better than 
 // the naive version with overlapped memory access and compute.
-void Blur_Optimized(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
+void Blur_MultiStream(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
                    uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
                    uchar* dr_out, uchar* dg_out, uchar* db_out) {
 
@@ -146,9 +149,9 @@ void Blur_Optimized(cv::Mat& frame, int width, int height, int frames, int num_p
   cudaMemcpyAsync(dg_in, hg_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[1]);
   cudaMemcpyAsync(db_in, hb_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[2]);
 
-  Convert_Naive<<<grid_size, block_size, 0, streams[0]>>>(dr_in, dr_out, width, height);
-  Convert_Naive<<<grid_size, block_size, 0, streams[1]>>>(dg_in, dg_out, width, height);
-  Convert_Naive<<<grid_size, block_size, 0, streams[2]>>>(db_in, db_out, width, height);
+  Convert_MultiStream<<<grid_size, block_size, 0, streams[0]>>>(dr_in, dr_out, width, height);
+  Convert_MultiStream<<<grid_size, block_size, 0, streams[1]>>>(dg_in, dg_out, width, height);
+  Convert_MultiStream<<<grid_size, block_size, 0, streams[2]>>>(db_in, db_out, width, height);
 
   cudaMemcpyAsync(hr_out, dr_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, streams[0]);
   cudaMemcpyAsync(hg_out, dg_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, streams[1]);
@@ -172,6 +175,7 @@ void Blur_Optimized(cv::Mat& frame, int width, int height, int frames, int num_p
   }
 }
 
+/*
 // CUB-optimized kernel with advanced block-level reductions
 void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
               uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
@@ -221,6 +225,11 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
     cudaStreamDestroy(streams[i]);
   }
 
+  // Free temporary buffers
+  cudaFree(tmp_r);
+  cudaFree(tmp_g);
+  cudaFree(tmp_b);
+
   // Update frame data
   #pragma omp parallel for collapse(2)
   for (int i = 0; i < height; i++) {
@@ -232,6 +241,7 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
     }
   }
 }
+*/
 
 // cuDNN-accelerated blur using optimized convolution operations
 /*
@@ -324,11 +334,14 @@ cv::dnn::Net initializeFaceDetection() {
   return net;
 }
 
-// Function to detect faces and update blur coordinates
+// Function to detect faces and update blur coordinates (selects top 3 faces by confidence)
 bool detectAndUpdateFace(cv::dnn::Net& net, cv::Mat& frame) {
   if (!enable) {
-    *blur_x = -1;
-    *blur_y = -1;
+    *num_faces = 0;
+    for (int i = 0; i < MAX_FACES; i++) {
+      blur_x[i] = -1;
+      blur_y[i] = -1;
+    }
     return false;
   }
 
@@ -340,12 +353,17 @@ bool detectAndUpdateFace(cv::dnn::Net& net, cv::Mat& frame) {
   const int numCoords = detections.size[3];
   float* data = (float*)detections.ptr<float>(0);
 
-  bool face_detected = false;
+  // Store detected faces with confidence scores
+  struct DetectedFace {
+    int x, y, distance;
+    float confidence;
+  };
+  std::vector<DetectedFace> detected_faces;
+
   for (int i = 0; i < numDetections; ++i) {
     float confidence = data[i * numCoords + 2];
 
     if (confidence > 0.5) {
-      face_detected = true;
       int x1 = static_cast<int>(data[i * numCoords + 3] * frame.cols);
       int y1 = static_cast<int>(data[i * numCoords + 4] * frame.rows);
       int x2 = static_cast<int>(data[i * numCoords + 5] * frame.cols);
@@ -357,23 +375,39 @@ bool detectAndUpdateFace(cv::dnn::Net& net, cv::Mat& frame) {
       y2 = std::max(0, std::min(y2, frame.rows - 1));
 
       if (x2 > x1 && y2 > y1) {
-        *blur_x = (x1 + x2) / 2;
-        *blur_y = (y1 + y2) / 2;
-        *distance = sqrt((x2 - *blur_x) * (x2 - *blur_x) + (y2 - *blur_y) * (y2 - *blur_y));
+        int center_x = (x1 + x2) / 2;
+        int center_y = (y1 + y2) / 2;
+        int face_distance = sqrt((x2 - center_x) * (x2 - center_x) + (y2 - center_y) * (y2 - center_y));
+        
+        detected_faces.push_back({center_x, center_y, face_distance, confidence});
         
         // Draw rectangle around detected face
         cv::rectangle(frame, cv::Point(x1, y1), cv::Point(x2, y2), cv::Scalar(0, 255, 0), 2);
-        break;
       }
     }
   }
 
-  if (!face_detected) {
-    *blur_x = -1;
-    *blur_y = -1;
+  // Sort faces by confidence (highest first) and take up to MAX_FACES
+  std::sort(detected_faces.begin(), detected_faces.end(), 
+    [](const DetectedFace& a, const DetectedFace& b) {
+      return a.confidence > b.confidence;
+    });
+
+  *num_faces = std::min(static_cast<int>(detected_faces.size()), MAX_FACES);
+  
+  for (int i = 0; i < *num_faces; i++) {
+    blur_x[i] = detected_faces[i].x;
+    blur_y[i] = detected_faces[i].y;
+    distance[i] = detected_faces[i].distance;
+  }
+  
+  // Clear remaining face slots
+  for (int i = *num_faces; i < MAX_FACES; i++) {
+    blur_x[i] = -1;
+    blur_y[i] = -1;
   }
 
-  return face_detected;
+  return *num_faces > 0;
 }
 
 // Function to test a specific kernel
@@ -382,10 +416,10 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
                uchar* hr_in, uchar* hg_in, uchar* hb_in, 
                uchar* hr_out, uchar* hg_out, uchar* hb_out,
                uchar* dr_in, uchar* dg_in, uchar* db_in, 
-               uchar* dr_out, uchar* dg_out, uchar* db_out,
-               int test_frames = 100) {
+               uchar* dr_out, uchar* dg_out, uchar* db_out) {
   
   std::cout << "\n=== Testing Kernel: " << kernel.name << " ===" << std::endl;
+  std::cout << "Processing entire video..." << std::endl;
   
   cv::Mat frame;
   auto start_time = std::chrono::high_resolution_clock::now();
@@ -394,7 +428,8 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
   // Reset video to beginning for fair comparison
   cap.set(cv::CAP_PROP_POS_FRAMES, 0);
   
-  for (int i = 0; i < test_frames && cap.read(frame); i++) {
+  int frame_number = 0;
+  while (cap.read(frame)) {
     auto frame_start = std::chrono::high_resolution_clock::now();
     
     cv::flip(frame, frame, 1);
@@ -414,11 +449,13 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
     double frame_fps = 1000000.0 / frame_duration.count();
     
     kernel.frame_count++;
+    frame_number++;
     
     // Add FPS text
-    std::string fps_text = kernel.name + " - Frame " + std::to_string(i) + " - FPS: " + std::to_string(static_cast<int>(frame_fps));
+    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(frame_fps));
     cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
     cv::imshow("Kernel Testing", frame);
+    cv::waitKey(1); // Allow OpenCV to update the display
   }
   
   auto end_time = std::chrono::high_resolution_clock::now();
@@ -537,7 +574,7 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
                        uchar* dr_out, uchar* dg_out, uchar* db_out) {
   
   std::cout << "\n=== Interactive Mode with " << kernel.name << " ===" << std::endl;
-  std::cout << "Left click to enable blur, right click to disable, ESC to exit" << std::endl;
+  std::cout << "Left click to enable blur (up to 3 faces), right click to disable, ESC to exit" << std::endl;
   
   cv::Mat frame;
   double last_frame_fps = 0.0;
@@ -546,8 +583,8 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
     auto frame_start = std::chrono::high_resolution_clock::now();
     
     if (!cap.read(frame)) {
-      cap.set(cv::CAP_PROP_POS_FRAMES, 0); // Loop video
-      continue;
+      std::cout << "Video ended. Press ESC to exit." << std::endl;
+      break; // Stop when video ends
     }
 
     cv::flip(frame, frame, 1);
@@ -563,7 +600,9 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
 
     // Display FPS from previous frame (synchronized with visual content)
     std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(last_frame_fps));
+    std::string faces_text = "Faces detected: " + std::to_string(*num_faces) + "/3";
     cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
+    cv::putText(frame, faces_text, cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
 
     cv::imshow("Blurred Image", frame);
     cv::setMouseCallback("Blurred Image", OnMouse, &frame);
@@ -579,15 +618,19 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
 }
 
 int main(int argc, char** argv) {
-  // Allocate Unified Memory
-  cudaMallocManaged(&blur_x, sizeof(int));
-  cudaMallocManaged(&blur_y, sizeof(int));
-  cudaMallocManaged(&distance, sizeof(int));
+  // Allocate Unified Memory for multiple faces
+  cudaMallocManaged(&blur_x, MAX_FACES * sizeof(int));
+  cudaMallocManaged(&blur_y, MAX_FACES * sizeof(int));
+  cudaMallocManaged(&distance, MAX_FACES * sizeof(int));
+  cudaMallocManaged(&num_faces, sizeof(int));
 
   // Initialize variables
-  *blur_x = -1;
-  *blur_y = -1;
-  *distance = DISTANCE;
+  *num_faces = 0;
+  for (int i = 0; i < MAX_FACES; i++) {
+    blur_x[i] = -1;
+    blur_y[i] = -1;
+    distance[i] = DISTANCE;
+  }
 
   // Read the video file path from the command line
   if (argc < 2) {
@@ -625,8 +668,8 @@ int main(int argc, char** argv) {
   // Initialize available kernels
   std::vector<KernelPerformance> kernels = {
     KernelPerformance("Naive CUDA", Blur_Naive),
-    KernelPerformance("Optimized CUDA", Blur_Optimized),
-    KernelPerformance("CUB Optimized", Blur_CUB)
+    KernelPerformance("Multi-Stream CUDA", Blur_MultiStream)
+    // KernelPerformance("CUB Optimized", Blur_CUB)  // Temporarily commented out
     // KernelPerformance("cuDNN Optimized", Blur_cuDNN)  // Commented out
   };
 
@@ -638,8 +681,7 @@ int main(int argc, char** argv) {
       for (auto& kernel : kernels) {
         testKernel(kernel, cap, net, width, height, frames, num_pixels,
                   hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
-                  dr_in, dg_in, db_in, dr_out, dg_out, db_out,
-                  100); // Test with 100 frames
+                  dr_in, dg_in, db_in, dr_out, dg_out, db_out);
       }
       
       // Print summary
@@ -773,6 +815,10 @@ int main(int argc, char** argv) {
     if (distance) {
       cudaFree(distance);
       distance = nullptr;
+    }
+    if (num_faces) {
+      cudaFree(num_faces);
+      num_faces = nullptr;
     }
     
     // Free CUDA device memory
