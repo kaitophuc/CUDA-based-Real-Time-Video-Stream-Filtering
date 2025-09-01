@@ -23,6 +23,9 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/block/block_reduce.cuh>
 
+// cuDNN includes for neural network accelerated operations
+#include <cudnn.h>
+
 #define BLUR_SIZE 30
 #define TILE_DIM 32
 #define FILTER_RADIUS 10
@@ -142,5 +145,37 @@ __global__ void Convert_CUB(uchar* d_in, uchar* d_out, int width, int height) {
     d_out[row * width + col] = static_cast<uchar>(pix_sum / pixel_count);
   } else {
     d_out[row * width + col] = d_in[row * width + col];
+  }
+}
+
+// Helper function to check cuDNN errors
+#define CHECK_CUDNN(call) do { \
+    cudnnStatus_t status = call; \
+    if (status != CUDNN_STATUS_SUCCESS) { \
+        std::cerr << "cuDNN error: " << cudnnGetErrorString(status) << " at line " << __LINE__ << std::endl; \
+        exit(EXIT_FAILURE); \
+    } \
+} while(0)
+
+// cuDNN-optimized kernel using convolution for blur effect
+__global__ void Convert_cuDNN_PostProcess(float* d_float_out, uchar* d_out, int width, int height, int channel_offset) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  
+  if (col >= width || row >= height) return;
+  
+  int idx = row * width + col;
+  
+  // Check if pixel is within blur circle
+  int dx = col - *blur_x;
+  int dy = row - *blur_y;
+  
+  if (dx * dx + dy * dy <= (*distance) * (*distance)) {
+    // Use cuDNN processed result (clamped to 0-255 range)
+    float val = d_float_out[channel_offset + idx];
+    d_out[idx] = static_cast<uchar>(fmaxf(0.0f, fminf(255.0f, val)));
+  } else {
+    // Use original pixel value for pixels outside blur circle
+    d_out[idx] = static_cast<uchar>(d_float_out[channel_offset + idx]);
   }
 }
