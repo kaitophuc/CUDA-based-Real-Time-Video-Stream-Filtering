@@ -74,23 +74,25 @@ int main(int argc, char** argv) {
       
       // Print summary
       std::cout << "\n=== PERFORMANCE SUMMARY ===" << std::endl;
-      std::cout << std::setw(20) << "Kernel Name" << std::setw(15) << "Avg FPS" << std::setw(15) << "Total Time" << std::endl;
-      std::cout << std::string(50, '-') << std::endl;
+      std::cout << std::setw(20) << "Kernel Name" << std::setw(15) << "Avg FPS" << std::setw(15) << "Realtime FPS" << std::setw(15) << "Total Time" << std::endl;
+      std::cout << std::string(65, '-') << std::endl;
       
       for (const auto& kernel : kernels) {
         std::cout << std::setw(20) << kernel.name 
                   << std::setw(15) << std::fixed << std::setprecision(2) << kernel.avg_fps
+                  << std::setw(15) << std::fixed << std::setprecision(2) << kernel.smoothed_fps
                   << std::setw(15) << std::fixed << std::setprecision(2) << kernel.total_time << "s" << std::endl;
       }
       
-      // Find best performing kernel
+      // Find best performing kernel based on realtime smoothed FPS (what user actually sees)
       auto best_kernel = std::max_element(kernels.begin(), kernels.end(),
         [](const KernelPerformance& a, const KernelPerformance& b) {
-          return a.avg_fps < b.avg_fps;
+          return a.smoothed_fps < b.smoothed_fps;
         });
       
       std::cout << "\nBest performing kernel: " << best_kernel->name 
-                << " (" << best_kernel->avg_fps << " FPS)" << std::endl;
+                << " (Realtime: " << std::fixed << std::setprecision(2) << best_kernel->smoothed_fps 
+                << " FPS, Average: " << best_kernel->avg_fps << " FPS)" << std::endl;
                 
       if (mode == "benchmark") {
         runInteractiveMode(*best_kernel, cap, net, width, height, frames, num_pixels,
@@ -134,7 +136,7 @@ int main(int argc, char** argv) {
       
       // Print summary
       std::cout << "\n=== WEBCAM BENCHMARK SUMMARY ===" << std::endl;
-      std::cout << std::setw(20) << "Kernel Name" << std::setw(15) << "Avg FPS" << std::setw(15) << "Total Frames" << std::setw(15) << "Test Duration" << std::endl;
+      std::cout << std::setw(20) << "Kernel Name" << std::setw(15) << "Total FPS" << std::setw(15) << "Total Frames" << std::setw(15) << "Test Duration" << std::endl;
       std::cout << std::string(65, '-') << std::endl;
       
       for (const auto& kernel : kernels) {
@@ -144,7 +146,7 @@ int main(int argc, char** argv) {
                   << std::setw(15) << std::fixed << std::setprecision(1) << kernel.total_time << "s" << std::endl;
       }
       
-      // Find best performing kernel
+      // Find best performing kernel based on total FPS (for webcam, kernel-only timing is not separately measured)
       auto best_kernel = std::max_element(kernels.begin(), kernels.end(),
         [](const KernelPerformance& a, const KernelPerformance& b) {
           return a.avg_fps < b.avg_fps;

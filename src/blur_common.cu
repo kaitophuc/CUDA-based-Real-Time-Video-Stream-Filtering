@@ -242,14 +242,14 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
     auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
     double current_fps = 1000000.0 / frame_duration.count();
     
-    // Calculate smoothed FPS for display
+    // Calculate smoothed FPS for display (total frame processing)
     double display_fps = calculateSmoothedFPS(current_fps, kernel.smoothed_fps, 0.15);
     
     kernel.frame_count++;
     frame_number++;
     
     // Add smoothed FPS and face count text (consistent with other modes)
-    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(display_fps));
+    std::string fps_text = kernel.name + " - Realtime FPS: " + std::to_string(static_cast<int>(display_fps));
     std::string faces_text = "Faces detected: " + std::to_string(*num_faces) + "/3";
     cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
     cv::putText(frame, faces_text, cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
@@ -261,12 +261,12 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
   auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
   
   kernel.total_time = total_duration.count() / 1000.0; // Convert to seconds
-  kernel.avg_fps = kernel.frame_count / kernel.total_time;
+  kernel.avg_fps = kernel.frame_count / kernel.total_time; // Total processing FPS
   
   std::cout << "Frames processed: " << kernel.frame_count << std::endl;
   std::cout << "Total time: " << kernel.total_time << " seconds" << std::endl;
   std::cout << "Average FPS: " << kernel.avg_fps << std::endl;
-  std::cout << "Final smoothed FPS: " << kernel.smoothed_fps << std::endl;
+  std::cout << "Final smoothed FPS (realtime): " << kernel.smoothed_fps << std::endl;
 }
 
 // Function to benchmark a specific kernel with webcam for a fixed duration

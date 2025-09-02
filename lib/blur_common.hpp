@@ -42,7 +42,7 @@ typedef void (*BlurKernelFunc)(cv::Mat&, int, int, int, int, uchar*, uchar*, uch
 struct KernelPerformance {
     std::string name;
     BlurKernelFunc function;
-    double avg_fps;
+    double avg_fps;          // Total processing FPS
     double total_time;
     int frame_count;
     double smoothed_fps;
