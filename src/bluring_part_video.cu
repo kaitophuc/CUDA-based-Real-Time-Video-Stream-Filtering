@@ -3,6 +3,7 @@
 #include "blur_naive.hpp"
 #include "blur_multistream.hpp"
 #include "blur_cub.hpp"
+#include "blur_prefix_sum.hpp"
 #include <iomanip>
 #include <thread>
 
@@ -58,7 +59,8 @@ int main(int argc, char** argv) {
   std::vector<KernelPerformance> kernels = {
     KernelPerformance("Naive CUDA", Blur_Naive),
     KernelPerformance("Multi-Stream CUDA", Blur_MultiStream),
-    KernelPerformance("CUB Optimized", Blur_CUB)
+    KernelPerformance("CUB Optimized", Blur_CUB),
+    KernelPerformance("Brent-Kung Prefix Sum", Blur_PrefixSum)
   };
 
   try {
