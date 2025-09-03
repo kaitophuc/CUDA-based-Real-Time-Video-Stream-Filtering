@@ -117,53 +117,72 @@ The common utilities module provides shared functionality:
 - **Exponential moving average** for smooth FPS display
 - **Modular architecture** for easy maintenance and extension
 
-## Usage Modes
+## Usage - Single Command Execution
 
 ### Quick Start
 ```bash
 # Build the project
 make build
 
-# Interactive mode (choose kernel)
-./run.sh 0 interactive
-
 # Test all kernels with video file
 ./run.sh data/input.mp4 test
 
-# Benchmark with webcam
-./run.sh 0 webcam_benchmark
+# Run specific kernel interactively with webcam
+./run.sh 0 interactive naive
+./run.sh 0 interactive multistream
+./run.sh 0 interactive cub
+./run.sh 0 interactive brentkunng
+
+# Run specific kernel with video file
+./run.sh data/input.mp4 interactive cub
 ```
+
+### Command Syntax
+```bash
+./run.sh [video_source] [mode] [kernel]
+```
+
+**Parameters:**
+- `video_source`: Video file path or `0` for webcam
+- `mode`: `test` or `interactive`
+- `kernel`: `naive`, `multistream`, `cub`, or `brentkunng` (required for interactive mode)
 
 ### Available Modes
 
 **Test Mode (`test`)**
-- Tests all kernels with entire video file
-- Processes all frames for comprehensive comparison
+- Tests all kernels sequentially
+- Processes entire video for comprehensive comparison
 - Outputs performance summary table
+- Example: `./run.sh data/input.mp4 test`
 
 **Interactive Mode (`interactive`)**
-- Choose specific kernel for real-time processing
+- Runs specified kernel in real-time
 - Left click to enable blur, right click to disable
 - ESC to exit
+- Requires kernel selection
+- Example: `./run.sh 0 interactive cub`
 
-**Webcam Benchmark Mode (`webcam_benchmark`)**
-- 10-second benchmark per kernel
-- Real-time progress display
-- Automatic best kernel identification
+### Available Kernels
 
-**Benchmark Mode (`benchmark`)**
-- Tests all kernels then runs best one interactively
+- **`naive`**: Naive CUDA implementation (baseline)
+- **`multistream`**: Multi-stream parallel processing
+- **`cub`**: CUB library optimized version
+- **`brentkunng`**: Brent-Kung prefix sum algorithm
 
-### Command Line Usage
+### Examples
 
 ```bash
-# Usage pattern
-./run.sh <video_source> <mode>
+# Test all kernels with webcam (10 seconds each)
+./run.sh 0 test
 
-# Examples
-./run.sh 0 interactive                    # Webcam interactive
-./run.sh data/video.mp4 test             # Video file testing
-./run.sh 0 webcam_benchmark              # Webcam benchmarking
+# Run CUB kernel interactively with webcam
+./run.sh 0 interactive cub
+
+# Test all kernels with video file
+./run.sh data/merged_clips.mp4 test
+
+# Run Brent-Kung kernel with video file
+./run.sh data/input.mp4 interactive brentkunng
 ```
 
 ## Performance Metrics
@@ -247,9 +266,10 @@ make build
 - **Left Click**: Enable blur at clicked position
 - **Right Click**: Disable all blur effects
 - **ESC**: Exit application
+- **Kernel Selection**: Specified via command line (e.g., `./run.sh 0 interactive cub`)
 
-### Face Detection Mode
-- Automatic detection of up to 3 faces
+### Automatic Face Detection
+- Detects up to 3 faces automatically
 - Blur applied to circular regions around face centers
 - Real-time bounding box visualization
 

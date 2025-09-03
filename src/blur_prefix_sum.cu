@@ -2,7 +2,6 @@
 
 __device__ void Brent_Kung_Scan(int* data, int n) {
     const int tid = threadIdx.x;
-    const int blockSize = blockDim.x;
 
     for (int stride = 1; stride < n; stride <<= 1) {
         int index = (tid + 1) * stride * 2 - 1;
@@ -194,10 +193,10 @@ void Blur_Brent_Kung(cv::Mat& frame, int width, int height, int frames, int num_
   cudaMalloc(&d_hsum_r, bytesI);
   cudaMalloc(&d_hsum_g, bytesI);
   cudaMalloc(&d_hsum_b, bytesI);
-  
-  dim3 bh(128), gv(W, (H + bh.x * 8 - 1) / (bh.x * 8));
-  dim3 gh((W + (bh.x * 8 - 1)) / (bh.x * 8), H);
-  
+
+  dim3 bh(BLOCK_THREADS), gv(W, (H + BLOCK_THREADS * ITEMS_PER_THREAD - 1) / (BLOCK_THREADS * ITEMS_PER_THREAD));
+  dim3 gh((W + (BLOCK_THREADS * ITEMS_PER_THREAD - 1)) / (BLOCK_THREADS * ITEMS_PER_THREAD), H);
+
   // Asynchronous operations for RGB channels using CUB kernel
   cudaMemcpyAsync(dr_in, hr_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[0]);
   cudaMemcpyAsync(dg_in, hg_in, num_pixels * sizeof(uchar), cudaMemcpyHostToDevice, streams[1]);

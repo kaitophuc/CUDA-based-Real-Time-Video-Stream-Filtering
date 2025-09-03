@@ -9,6 +9,9 @@
 #include <cub/device/device_scan.cuh>
 #include <cub/block/block_reduce.cuh>
 
+const int BLOCK_THREADS = 128;
+const int ITEMS_PER_THREAD = 15;
+
 __device__ __forceinline__ int box_count(int x, int y, int width, int height, int R) {
     int left = max(0, x - R);
     int right = min(width - 1, x + R);
@@ -18,13 +21,13 @@ __device__ __forceinline__ int box_count(int x, int y, int width, int height, in
 }
 
 // CUB-optimized kernel declarations
-template<int R, int BLOCK_THREADS = 128, int ITEMS_PER_THREAD = 8>
+template<int R, int BLOCK_THREADS = BLOCK_THREADS, int ITEMS_PER_THREAD = ITEMS_PER_THREAD>
 __global__ void BoxBlurHorizontal(
     const uchar* d_in,
     int width, int height, int pitch,
     int *hsum);
 
-template<int R, int BLOCK_THREADS = 128, int ITEMS_PER_THREAD = 8>
+template<int R, int BLOCK_THREADS = BLOCK_THREADS, int ITEMS_PER_THREAD = ITEMS_PER_THREAD>
 __global__ void BoxBlurVertical(
     const int* hsum,
     const uchar* d_in,

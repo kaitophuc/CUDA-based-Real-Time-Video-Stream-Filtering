@@ -24,17 +24,34 @@ int main(int argc, char** argv) {
 
   // Read the video file path from the command line
   if (argc < 2) {
-    std::cerr << "Usage: " << argv[0] << " <video_file_path> [mode]" << std::endl;
-    std::cerr << "Modes: test (default), interactive, benchmark, webcam_benchmark" << std::endl;
-    std::cerr << "  test: Test all kernels with video file" << std::endl;
-    std::cerr << "  interactive: Choose a kernel for interactive mode" << std::endl;
-    std::cerr << "  benchmark: Test all kernels then run best in interactive mode" << std::endl;
-    std::cerr << "  webcam_benchmark: Test all kernels with webcam for 10 seconds each" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " <video_file_path> <mode> [kernel]" << std::endl;
+    std::cerr << "Modes: test, interactive" << std::endl;
+    std::cerr << "Kernels (for interactive mode): naive, multistream, cub, brentkunng" << std::endl;
+    std::cerr << "  test: Test all kernels and show performance comparison" << std::endl;
+    std::cerr << "  interactive: Run specific kernel interactively" << std::endl;
+    std::cerr << "Examples:" << std::endl;
+    std::cerr << "  " << argv[0] << " 0 test                 # Test all kernels with webcam" << std::endl;
+    std::cerr << "  " << argv[0] << " 0 interactive cub      # Run CUB kernel with webcam" << std::endl;
+    std::cerr << "  " << argv[0] << " video.mp4 interactive naive # Run Naive kernel with video" << std::endl;
     return -1;
   }
 
   std::string video_file_path = argv[1];
   std::string mode = (argc >= 3) ? argv[2] : "interactive";
+  std::string selected_kernel = (argc >= 4) ? argv[3] : "";
+
+  // Validate mode
+  if (mode != "test" && mode != "interactive") {
+    std::cerr << "Error: Invalid mode '" << mode << "'. Valid modes: test, interactive" << std::endl;
+    return -1;
+  }
+
+  // For interactive mode, kernel selection is required
+  if (mode == "interactive" && selected_kernel.empty()) {
+    std::cerr << "Error: Kernel selection required for interactive mode." << std::endl;
+    std::cerr << "Valid kernels: naive, multistream, cub, brentkunng" << std::endl;
+    return -1;
+  }
 
   // Initialize components
   cv::dnn::Net net = initializeFaceDetection();
@@ -158,22 +175,26 @@ int main(int argc, char** argv) {
                 << " (" << std::fixed << std::setprecision(2) << best_kernel->avg_fps << " FPS)" << std::endl;
       
     } else if (mode == "interactive") {
-      // Let user choose kernel
-      std::cout << "\nAvailable kernels:" << std::endl;
-      for (size_t i = 0; i < kernels.size(); i++) {
-        std::cout << i + 1 << ". " << kernels[i].name << std::endl;
+      // Map kernel name to index
+      int selected_index = -1;
+      
+      if (selected_kernel == "naive") {
+        selected_index = 0;
+      } else if (selected_kernel == "multistream") {
+        selected_index = 1;
+      } else if (selected_kernel == "cub") {
+        selected_index = 2;
+      } else if (selected_kernel == "brentkunng") {
+        selected_index = 3;
+      } else {
+        std::cerr << "Error: Invalid kernel '" << selected_kernel << "'" << std::endl;
+        std::cerr << "Valid kernels: naive, multistream, cub, brentkunng" << std::endl;
+        return -1;
       }
+
+      std::cout << "Running " << kernels[selected_index].name << " kernel in interactive mode..." << std::endl;
       
-      std::cout << "Choose kernel (1-" << kernels.size() << "): ";
-      int choice;
-      std::cin >> choice;
-      
-      if (choice < 1 || choice > static_cast<int>(kernels.size())) {
-        std::cout << "Invalid choice, using first kernel" << std::endl;
-        choice = 1;
-      }
-      
-      runInteractiveMode(kernels[choice - 1], cap, net, width, height, frames, num_pixels,
+      runInteractiveMode(kernels[selected_index], cap, net, width, height, frames, num_pixels,
                         hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
                         dr_in, dg_in, db_in, dr_out, dg_out, db_out);
     }
