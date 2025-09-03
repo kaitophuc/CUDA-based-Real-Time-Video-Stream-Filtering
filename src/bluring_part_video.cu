@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
     KernelPerformance("Naive CUDA", Blur_Naive),
     KernelPerformance("Multi-Stream CUDA", Blur_MultiStream),
     KernelPerformance("CUB Optimized", Blur_CUB),
-    KernelPerformance("Brent-Kung Prefix Sum", Blur_PrefixSum)
+    KernelPerformance("Brent-Kung Prefix Sum", Blur_Brent_Kung)
   };
 
   try {
