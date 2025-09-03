@@ -42,13 +42,9 @@ typedef void (*BlurKernelFunc)(cv::Mat&, int, int, int, int, uchar*, uchar*, uch
 struct KernelPerformance {
     std::string name;
     BlurKernelFunc function;
-    double avg_fps;          // Total processing FPS
-    double total_time;
-    int frame_count;
-    double smoothed_fps;
     
     KernelPerformance(const std::string& n, BlurKernelFunc f) 
-        : name(n), function(f), avg_fps(0.0), total_time(0.0), frame_count(0), smoothed_fps(0.0) {}
+        : name(n), function(f) {}
 };
 
 // Common utility functions
@@ -66,8 +62,6 @@ cv::VideoCapture initializeVideoCapture(const std::string& video_file_path);
 cv::dnn::Net initializeFaceDetection();
 bool detectAndUpdateFace(cv::dnn::Net& net, cv::Mat& frame);
 
-// Performance and testing functions
-double calculateSmoothedFPS(double current_fps, double& smoothed_fps, double alpha = 0.1);
 void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& net,
                int width, int height, int frames, int num_pixels,
                uchar* hr_in, uchar* hg_in, uchar* hb_in, 

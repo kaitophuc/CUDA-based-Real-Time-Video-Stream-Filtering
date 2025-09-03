@@ -8,16 +8,6 @@ __managed__ int *distance;
 __managed__ int *num_faces;
 bool enable = true;
 
-// Helper function for smooth FPS calculation using Exponential Moving Average
-double calculateSmoothedFPS(double current_fps, double& smoothed_fps, double alpha) {
-    if (smoothed_fps == 0.0) {
-        smoothed_fps = current_fps;  // Initialize on first frame
-    } else {
-        smoothed_fps = alpha * current_fps + (1.0 - alpha) * smoothed_fps;
-    }
-    return smoothed_fps;
-}
-
 __host__ void CheckCudaError(const std::string& error_message) {
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
@@ -215,14 +205,14 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
   std::cout << "Processing entire video..." << std::endl;
   
   cv::Mat frame;
-  auto start_time = std::chrono::high_resolution_clock::now();
-  kernel.frame_count = 0;
-  kernel.smoothed_fps = 0.0;  // Reset smoothed FPS
   
   // Reset video to beginning for fair comparison
   cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+
+  double display_fps = 0.0;
+  int frame_count = 0;
+  auto start_time = std::chrono::high_resolution_clock::now();
   
-  int frame_number = 0;
   while (cap.read(frame)) {
     auto frame_start = std::chrono::high_resolution_clock::now();
     
@@ -237,36 +227,34 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
                      hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
                      dr_in, dg_in, db_in, dr_out, dg_out, db_out);
     }
-    
+
     auto frame_end = std::chrono::high_resolution_clock::now();
     auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
     double current_fps = 1000000.0 / frame_duration.count();
-    
-    // Calculate smoothed FPS for display (total frame processing)
-    double display_fps = calculateSmoothedFPS(current_fps, kernel.smoothed_fps, 0.15);
-    
-    kernel.frame_count++;
-    frame_number++;
-    
+
+    display_fps += current_fps;
+    frame_count++;
+
     // Add smoothed FPS and face count text (consistent with other modes)
-    std::string fps_text = kernel.name + " - Realtime FPS: " + std::to_string(static_cast<int>(display_fps));
+    std::string fps_text = kernel.name + " - Realtime FPS: " + std::to_string(static_cast<int>(current_fps));
     std::string faces_text = "Faces detected: " + std::to_string(*num_faces) + "/3";
     cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
     cv::putText(frame, faces_text, cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
     cv::imshow("Kernel Testing", frame);
     cv::waitKey(1); // Allow OpenCV to update the display
+
   }
-  
+
   auto end_time = std::chrono::high_resolution_clock::now();
   auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-  
-  kernel.total_time = total_duration.count() / 1000.0; // Convert to seconds
-  kernel.avg_fps = kernel.frame_count / kernel.total_time; // Total processing FPS
-  
-  std::cout << "Frames processed: " << kernel.frame_count << std::endl;
-  std::cout << "Total time: " << kernel.total_time << " seconds" << std::endl;
-  std::cout << "Average FPS: " << kernel.avg_fps << std::endl;
-  std::cout << "Final smoothed FPS (realtime): " << kernel.smoothed_fps << std::endl;
+
+  double final_display_fps = std::round((display_fps / frame_count) * 100.0) / 100.0;
+  double final_total_fps = std::round((frame_count / (total_duration.count() / 1000.0)) * 100.0) / 100.0;
+
+  std::cout << "Frames processed: " << frame_count << std::endl;
+  std::cout << "Total time: " << total_duration.count() / 1000.0 << " seconds" << std::endl;
+  std::cout << "Final display FPS: " << final_display_fps << std::endl;
+  std::cout << "Final total FPS: " << final_total_fps << std::endl;
 }
 
 // Function to benchmark a specific kernel with webcam for a fixed duration
@@ -295,8 +283,8 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
   std::cout << "Starting benchmark..." << std::endl;
   
   auto start_time = std::chrono::high_resolution_clock::now();
-  kernel.frame_count = 0;
-  kernel.smoothed_fps = 0.0;  // Reset smoothed FPS
+  double display_fps = 0.0;
+  int frame_count = 0;
   
   while (true) {
     auto frame_start = std::chrono::high_resolution_clock::now();
@@ -324,20 +312,18 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
                      dr_in, dg_in, db_in, dr_out, dg_out, db_out);
     }
     
-    kernel.frame_count++;
-    
     auto frame_end = std::chrono::high_resolution_clock::now();
     auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
     double current_fps = 1000000.0 / frame_duration.count();
+
+    display_fps += current_fps;
+    frame_count++;
     
-    // Calculate smoothed FPS for display
-    double display_fps = calculateSmoothedFPS(current_fps, kernel.smoothed_fps, 0.15); // Consistent alpha value
-    
-    // Display progress, current per-frame FPS, and face count (consistent with other modes)
+    // Display progress, current per-frame FPS, and face count
     double progress = (elapsed.count() / 1000.0) / test_duration;
     
     std::string progress_text = kernel.name + " - Progress: " + std::to_string(static_cast<int>(progress * 100)) + "%";
-    std::string fps_text = "Current FPS: " + std::to_string(static_cast<int>(display_fps));
+    std::string fps_text = "Current FPS: " + std::to_string(static_cast<int>(current_fps));
     std::string faces_text = "Faces detected: " + std::to_string(*num_faces) + "/3";
     std::string time_text = "Time: " + std::to_string(static_cast<int>(elapsed.count() / 1000.0)) + "/" + std::to_string(static_cast<int>(test_duration)) + "s";
     
@@ -361,14 +347,14 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
   auto end_time = std::chrono::high_resolution_clock::now();
   auto total_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
   
-  kernel.total_time = total_duration.count() / 1000.0; // Convert to seconds
-  kernel.avg_fps = kernel.frame_count / kernel.total_time;
+  double final_display_fps = std::round((display_fps / frame_count) * 100.0) / 100.0;
+  double final_total_fps = std::round((frame_count / (total_duration.count() / 1000.0)) * 100.0) / 100.0;
   
   std::cout << "Benchmark completed!" << std::endl;
-  std::cout << "Frames processed: " << kernel.frame_count << std::endl;
-  std::cout << "Total time: " << kernel.total_time << " seconds" << std::endl;
-  std::cout << "Average FPS: " << kernel.avg_fps << std::endl;
-  std::cout << "Final smoothed FPS: " << kernel.smoothed_fps << std::endl;
+  std::cout << "Frames processed: " << frame_count << std::endl;
+  std::cout << "Total time: " << total_duration.count() / 1000.0 << " seconds" << std::endl;
+  std::cout << "Average FPS: " << final_total_fps << std::endl;
+  std::cout << "Final display FPS: " << final_display_fps << std::endl;
 }
 
 // Function to run interactive mode with selected kernel
@@ -383,7 +369,8 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
   std::cout << "Left click to enable blur (up to 3 faces), right click to disable, ESC to exit" << std::endl;
   
   cv::Mat frame;
-  kernel.smoothed_fps = 0.0;  // Reset smoothed FPS
+  double display_fps = 0.0;
+  int frame_count = 0;
   
   while (true) {
     auto frame_start = std::chrono::high_resolution_clock::now();
@@ -407,12 +394,15 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
     auto frame_end = std::chrono::high_resolution_clock::now();
     auto frame_duration = std::chrono::duration_cast<std::chrono::microseconds>(frame_end - frame_start);
     double current_fps = 1000000.0 / frame_duration.count();
-    
-    // Calculate smoothed FPS for display
-    double display_fps = calculateSmoothedFPS(current_fps, kernel.smoothed_fps, 0.15); // Consistent alpha value
 
-    // Display smoothed FPS and face count (consistent with other modes)
-    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(display_fps));
+    display_fps += current_fps;
+    frame_count++;
+
+    // Calculate running average for display
+    double avg_display_fps = display_fps / frame_count;
+
+    // Display average FPS and face count
+    std::string fps_text = kernel.name + " - FPS: " + std::to_string(static_cast<int>(avg_display_fps));
     std::string faces_text = "Faces detected: " + std::to_string(*num_faces) + "/3";
     cv::putText(frame, fps_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
     cv::putText(frame, faces_text, cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0), 2);
