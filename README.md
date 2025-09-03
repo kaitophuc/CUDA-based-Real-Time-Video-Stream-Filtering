@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project implements CUDA-accelerated face detection and blurring for real-time video processing. It features a **modular architecture** that separates each CUDA kernel implementation into dedicated files, making the codebase more maintainable and easier to understand. The project compares three different CUDA kernel implementations for selective blurring of detected faces in video streams or webcam feeds.
+This project implements CUDA-accelerated face detection and blurring for real-time video processing. It features a **modular architecture** that separates each CUDA kernel implementation into dedicated files, making the codebase more maintainable and easier to understand. The project compares four different CUDA kernel implementations for selective blurring of detected faces in video streams or webcam feeds.
 
 The project features automatic face detection using OpenCV's DNN module with SSD MobileNet and applies GPU-accelerated blur effects to detected facial regions. Multiple CUDA kernel implementations are available for performance comparison and educational purposes.
 
@@ -12,25 +12,35 @@ The codebase has been reorganized into a modular architecture where each blur ke
 
 ```
 ├── data/               # Video files for testing
-│   └── input.mp4      # Sample video files
+│   ├── input.mp4      # Sample video files
+│   └── merged_clips.mp4
 ├── src/               # Source code (modular organization)
 │   ├── bluring_part_video.cu    # Main application orchestrator
 │   ├── blur_common.cu           # Common utilities and functions
 │   ├── blur_naive.cu            # Naive CUDA kernel implementation
 │   ├── blur_multistream.cu      # Multi-stream CUDA implementation
-│   └── blur_cub.cu              # CUB optimized implementation
+│   ├── blur_cub.cu              # CUB optimized implementation
+│   ├── blur_prefix_sum.cu       # Brent-Kung prefix sum implementation
+│   └── blur_thrust.cu           # Thrust library implementation (placeholder)
 ├── lib/               # Header files (modular organization)
 │   ├── blur_common.hpp          # Common definitions and utilities
 │   ├── blur_naive.hpp           # Naive kernel declarations
 │   ├── blur_multistream.hpp     # Multi-stream kernel declarations
-│   └── blur_cub.hpp             # CUB kernel declarations
+│   ├── blur_cub.hpp             # CUB kernel declarations
+│   ├── blur_prefix_sum.hpp      # Brent-Kung prefix sum declarations
+│   ├── blur_thrust.hpp          # Thrust library declarations (placeholder)
+│   └── bluring_part_video.hpp   # Legacy header (compatibility)
 ├── bin/               # Compiled binaries
+│   └── bluring_part_video.exe
 ├── models/            # AI models for face detection
 │   ├── deploy.prototxt
 │   ├── res10_300x300_ssd_iter_140000.caffemodel
 │   └── shape_predictor_68_face_landmarks.dat
+├── tools/             # Utility scripts for video processing
+│   ├── extract_clips.py         # Extract random clips from videos
+│   └── merge_clips.py           # Merge multiple clips into one video
 ├── Makefile          # Updated build configuration for modular build
-└── run.sh            # Execution script
+└── run.sh            # Comprehensive execution script
 ```
 
 ## Modular Architecture Benefits
@@ -57,7 +67,7 @@ The codebase has been reorganized into a modular architecture where each blur ke
 
 ## Available CUDA Kernels
 
-The project implements three different CUDA kernel variants, each in its own file:
+The project implements four different CUDA kernel variants, each in its own file:
 
 ### 1. **Naive CUDA Kernel** (`src/blur_naive.cu`)
 - **Architecture**: Single kernel launch processing all RGB channels together
@@ -79,6 +89,13 @@ The project implements three different CUDA kernel variants, each in its own fil
 - **Optimization**: Advanced grid configurations and block-level reductions
 - **Performance**: Reduced memory allocations with temporary buffers
 - **Use Case**: High-performance production implementation
+
+### 4. **Brent-Kung Prefix Sum Kernel** (`src/blur_prefix_sum.cu`)
+- **Architecture**: Custom implementation using Brent-Kung algorithm for prefix sums
+- **Memory Management**: Separable box blur with hand-crafted prefix sum operations
+- **Optimization**: Work-efficient O(n) prefix sum algorithm
+- **Educational Value**: Demonstrates custom parallel algorithm implementation
+- **Use Case**: Research and educational comparison with CUB library
 
 ## Common Utilities (`src/blur_common.cu`)
 
@@ -172,7 +189,7 @@ The framework measures:
 ```bash
 # Install dependencies
 sudo apt update
-sudo apt install libopencv-dev libopencv-contrib-dev
+sudo apt install libopencv-dev libopencv-contrib-dev python3 python3-opencv
 
 # Clone and build
 git clone <repository-url>
@@ -203,6 +220,7 @@ make build
 - **Naive**: `src/blur_naive.cu` - Simple single-kernel approach
 - **Multi-Stream**: `src/blur_multistream.cu` - Stream parallelism
 - **CUB Optimized**: `src/blur_cub.cu` - Advanced CUB operations
+- **Brent-Kung**: `src/blur_prefix_sum.cu` - Custom prefix sum algorithm
 
 ### Face Detection Pipeline
 1. Frame capture via OpenCV VideoCapture
@@ -263,21 +281,31 @@ Total time: 36.518 seconds
 Average FPS: 82.1239
 Final smoothed FPS: 102.523
 
-=== PERFORMANCE SUMMARY ===
-         Kernel Name        Avg FPS     Total Time
---------------------------------------------------
-          Naive CUDA          54.02          55.52s
-   Multi-Stream CUDA          38.28          78.33s
-       CUB Optimized          82.12          36.52s
+=== Testing Kernel: Brent-Kung Prefix Sum ===
+Processing entire video...
+Frames processed: 2999
+Total time: 34.905 seconds
+Average FPS: 85.9189
+Final smoothed FPS (realtime): 115.367
 
-Best performing kernel: CUB Optimized (82.12 FPS)
+=== PERFORMANCE SUMMARY ===
+         Kernel Name        Avg FPS   Realtime FPS     Total Time
+-----------------------------------------------------------------
+          Naive CUDA          51.28          51.36          58.49s
+   Multi-Stream CUDA          37.38          32.23          80.23s
+       CUB Optimized          86.25         111.69          34.77s
+Brent-Kung Prefix Sum          85.92         115.37          34.91s
+
+Best performing kernel: Brent-Kung Prefix Sum (Realtime: 115.37 FPS, Average: 85.92 FPS)
 ```
 
 **Key Findings:**
 - **CUB Optimized** performs best with 82.12 FPS (52% faster than Naive)
-- **Multi-Stream CUDA** is actually slower than Naive due to stream overhead
+- **Brent-Kung Prefix Sum** competitive with CUB while being custom implementation
+- **Multi-Stream CUDA** is slower than Naive due to stream overhead with this workload
 - **Naive CUDA** provides good baseline performance at 54.02 FPS
 - Processing a 1080p video with face detection and blurring in real-time
+- Custom algorithms can approach library performance with proper optimization
 
 ## Development Notes
 
