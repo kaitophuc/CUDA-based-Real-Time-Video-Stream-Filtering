@@ -61,12 +61,7 @@ __global__ void Convert_MultiStream(uchar* d_in, uchar* d_out, int width, int he
 // the naive version with overlapped memory access and compute.
 void Blur_MultiStream(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
                    uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
-                   uchar* dr_out, uchar* dg_out, uchar* db_out) {
-
-  cudaStream_t streams[3];
-  for (int i = 0; i < 3; i++) {
-    cudaStreamCreate(&streams[i]);
-  }
+                   uchar* dr_out, uchar* dg_out, uchar* db_out, cudaStream_t* streams) {
 
   dim3 block_size(TILE_DIM, TILE_DIM);
   dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
@@ -87,7 +82,6 @@ void Blur_MultiStream(cv::Mat& frame, int width, int height, int frames, int num
   // Synchronize all streams
   for (int i = 0; i < 3; i++) {
     cudaStreamSynchronize(streams[i]);
-    cudaStreamDestroy(streams[i]);
   }
 
   // Update frame data

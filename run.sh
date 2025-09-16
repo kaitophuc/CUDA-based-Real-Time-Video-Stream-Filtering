@@ -27,14 +27,17 @@ show_usage() {
     echo "  multistream    Multi-Stream CUDA implementation"
     echo "  cub            CUB Optimized implementation"
     echo "  brentkunng     Brent-Kung Prefix Sum implementation"
+    echo "  thrust         Thrust Library implementation"
     echo "  test           Test and compare all kernels"
+    echo "  singletest     Test a single kernel with performance metrics"
     echo ""
     echo "Examples:"
-    echo "  $0 0 cub                     # Webcam + CUB kernel"
-    echo "  $0 video.mp4 brentkunng      # Video + Brent-Kung kernel"
-    echo "  $0 --build 0 test            # Build + Webcam + test all"
-    echo "  $0 0 naive                   # Webcam + Naive kernel"
-    echo "  $0 data/input.mp4 multistream # Video + Multi-Stream kernel"
+    echo "  $0 0 cub                     # Webcam + CUB kernel (interactive)"
+    echo "  $0 video.mp4 brentkunng      # Video + Brent-Kung kernel (interactive)"
+    echo "  $0 --build 0 test            # Build + Webcam + test all kernels"
+    echo "  $0 0 thrust                  # Webcam + Thrust kernel (interactive)"
+    echo "  $0 0 singletest thrust       # Test only Thrust kernel with performance metrics"
+    echo "  $0 data/input.mp4 singletest naive # Test only Naive kernel with video"
     echo ""
 }
 
@@ -54,12 +57,15 @@ map_kernel_to_mode() {
         brentkunng)
             echo "interactive"
             ;;
+        thrust)
+            echo "interactive"
+            ;;
         test)
             echo "test"
             ;;
         *)
             echo "Error: Invalid kernel '$kernel'"
-            echo "Valid kernels: naive, multistream, cub, brentkunng, test"
+            echo "Valid kernels: naive, multistream, cub, brentkunng, thrust, test"
             exit 1
             ;;
     esac
@@ -119,11 +125,28 @@ fi
 # Always build the project for actual execution (not just help)
 build_project
 
-# Parse video source and kernel
+# Parse arguments - handle both old and new format
 VIDEO_SOURCE=$1
-KERNEL=$2
+
+# Check if second argument is "singletest" (new 3-argument format)
+if [ "$2" = "singletest" ]; then
+    MODE="singletest"
+    KERNEL=$3
+    
+    if [ -z "$KERNEL" ]; then
+        echo "Error: Kernel name required for singletest mode"
+        echo "Usage: $0 [video_source] singletest [kernel]"
+        echo "Example: $0 0 singletest thrust"
+        exit 1
+    fi
+else
+    # Old 2-argument format: map kernel to mode
+    KERNEL=$2
+    MODE=$(map_kernel_to_mode "$KERNEL")
+fi
 
 echo "Video source: $VIDEO_SOURCE"
+echo "Mode: $MODE"
 echo "Kernel: $KERNEL"
 echo ""
 
@@ -141,11 +164,12 @@ if [ "$VIDEO_SOURCE" != "0" ] && [ ! -f "$VIDEO_SOURCE" ]; then
     fi
 fi
 
-# Map kernel to application mode
-MODE=$(map_kernel_to_mode "$KERNEL")
-
 # Run the application
-echo "Starting application with $KERNEL kernel..."
+if [ "$MODE" = "singletest" ]; then
+    echo "Starting single kernel test with $KERNEL kernel..."
+else
+    echo "Starting application with $KERNEL kernel..."
+fi
 ./bin/bluring_part_video.exe "$VIDEO_SOURCE" "$MODE" "$KERNEL"
 
 echo ""

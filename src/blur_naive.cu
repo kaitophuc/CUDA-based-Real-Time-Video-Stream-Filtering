@@ -79,10 +79,10 @@ __global__ void Convert_Naive(uchar* dr_in, uchar* dg_in, uchar* db_in, uchar* d
 // Uses sequential memory transfers but only one kernel launch
 void Blur_Naive(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
            uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
-           uchar* dr_out, uchar* dg_out, uchar* db_out) {
+           uchar* dr_out, uchar* dg_out, uchar* db_out, cudaStream_t* streams) {
 
-  cudaStream_t stream;
-  cudaStreamCreate(&stream);
+  // Use the first stream for naive implementation
+  cudaStream_t stream = streams[0];
 
   dim3 block_size(TILE_DIM, TILE_DIM);
   dim3 grid_size((width + block_size.x - 1) / block_size.x, (height + block_size.y - 1) / block_size.y);
@@ -101,10 +101,6 @@ void Blur_Naive(cv::Mat& frame, int width, int height, int frames, int num_pixel
   cudaMemcpyAsync(hb_out, db_out, num_pixels * sizeof(uchar), cudaMemcpyDeviceToHost, stream);
 
   cudaStreamSynchronize(stream);
-  
-  // Cleanup stream
-  cudaStreamDestroy(stream);
-
   // Update frame data
   #pragma omp parallel for collapse(2)
   for (int i = 0; i < height; i++) {

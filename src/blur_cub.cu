@@ -177,12 +177,7 @@ __global__ void BoxBlurVertical(
 // CUB-optimized kernel with advanced block-level reductions
 void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 
               uchar* hr_out, uchar* hg_out, uchar* hb_out, uchar* dr_in, uchar* dg_in, uchar* db_in, 
-              uchar* dr_out, uchar* dg_out, uchar* db_out) {
-
-  cudaStream_t streams[3];
-  for (int i = 0; i < 3; i++) {
-    cudaStreamCreate(&streams[i]);
-  }
+              uchar* dr_out, uchar* dg_out, uchar* db_out, cudaStream_t* streams) {
 
   const int W = width;
   const int H = height;
@@ -220,7 +215,6 @@ void Blur_CUB(cv::Mat& frame, int width, int height, int frames, int num_pixels,
   // Synchronize all streams
   for (int i = 0; i < 3; i++) {
     cudaStreamSynchronize(streams[i]);
-    cudaStreamDestroy(streams[i]);
   }
 
   // Free temporary buffers (only sum arrays now)

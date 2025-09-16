@@ -208,6 +208,11 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
   
   // Reset video to beginning for fair comparison
   cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+  
+  cudaStream_t streams[3];
+  for (int i = 0; i < 3; i++) {
+    cudaStreamCreate(&streams[i]);
+  }
 
   double display_fps = 0.0;
   int frame_count = 0;
@@ -225,7 +230,7 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
       // Apply the kernel
       kernel.function(frame, width, height, frames, num_pixels, 
                      hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
-                     dr_in, dg_in, db_in, dr_out, dg_out, db_out);
+                     dr_in, dg_in, db_in, dr_out, dg_out, db_out, streams);
     }
 
     auto frame_end = std::chrono::high_resolution_clock::now();
@@ -255,6 +260,11 @@ void testKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::Net& 
   std::cout << "Total time: " << total_duration.count() / 1000.0 << " seconds" << std::endl;
   std::cout << "Final display FPS: " << final_display_fps << std::endl;
   std::cout << "Final total FPS: " << final_total_fps << std::endl;
+
+  // Destroy streams
+  for (int i = 0; i < 3; i++) {
+    cudaStreamDestroy(streams[i]);
+  }
 }
 
 // Function to benchmark a specific kernel with webcam for a fixed duration
@@ -281,6 +291,12 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
   }
   
   std::cout << "Starting benchmark..." << std::endl;
+  
+  // Create CUDA streams for benchmark
+  cudaStream_t streams[3];
+  for (int i = 0; i < 3; i++) {
+    cudaStreamCreate(&streams[i]);
+  }
   
   auto start_time = std::chrono::high_resolution_clock::now();
   double display_fps = 0.0;
@@ -309,7 +325,7 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
       // Apply the kernel
       kernel.function(frame, width, height, frames, num_pixels, 
                      hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
-                     dr_in, dg_in, db_in, dr_out, dg_out, db_out);
+                     dr_in, dg_in, db_in, dr_out, dg_out, db_out, streams);
     }
     
     auto frame_end = std::chrono::high_resolution_clock::now();
@@ -355,6 +371,11 @@ void benchmarkKernel(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dnn::
   std::cout << "Total time: " << total_duration.count() / 1000.0 << " seconds" << std::endl;
   std::cout << "Average FPS: " << final_total_fps << std::endl;
   std::cout << "Final display FPS: " << final_display_fps << std::endl;
+  
+  // Destroy streams
+  for (int i = 0; i < 3; i++) {
+    cudaStreamDestroy(streams[i]);
+  }
 }
 
 // Function to run interactive mode with selected kernel
@@ -367,6 +388,12 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
   
   std::cout << "\n=== Interactive Mode with " << kernel.name << " ===" << std::endl;
   std::cout << "Left click to enable blur (up to 3 faces), right click to disable, ESC to exit" << std::endl;
+  
+  // Create CUDA streams for interactive mode
+  cudaStream_t streams[3];
+  for (int i = 0; i < 3; i++) {
+    cudaStreamCreate(&streams[i]);
+  }
   
   cv::Mat frame;
   double display_fps = 0.0;
@@ -388,7 +415,7 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
     if (face_detected) {
       kernel.function(frame, width, height, frames, num_pixels, 
                      hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
-                     dr_in, dg_in, db_in, dr_out, dg_out, db_out);
+                     dr_in, dg_in, db_in, dr_out, dg_out, db_out, streams);
     }
 
     auto frame_end = std::chrono::high_resolution_clock::now();
@@ -412,5 +439,10 @@ void runInteractiveMode(KernelPerformance& kernel, cv::VideoCapture& cap, cv::dn
     
     int key = cv::waitKey(1);
     if (key == 27) break; // ESC key
+  }
+  
+  // Destroy streams
+  for (int i = 0; i < 3; i++) {
+    cudaStreamDestroy(streams[i]);
   }
 }

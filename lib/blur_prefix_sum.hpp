@@ -30,6 +30,6 @@ void Blur_Brent_Kung(cv::Mat& frame, int width, int height, int frames, int num_
                      uchar* hr_in, uchar* hg_in, uchar* hb_in,
                      uchar* hr_out, uchar* hg_out, uchar* hb_out,
                      uchar* dr_in, uchar* dg_in, uchar* db_in,
-                     uchar* dr_out, uchar* dg_out, uchar* db_out);
+                     uchar* dr_out, uchar* dg_out, uchar* db_out, cudaStream_t* streams);
 
 #endif // BLUR_PREFIX_SUM_HPP

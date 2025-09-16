@@ -36,7 +36,7 @@ extern bool enable;
 // Kernel function pointer type
 typedef void (*BlurKernelFunc)(cv::Mat&, int, int, int, int, uchar*, uchar*, uchar*, 
                               uchar*, uchar*, uchar*, uchar*, uchar*, uchar*, 
-                              uchar*, uchar*, uchar*);
+                              uchar*, uchar*, uchar*, cudaStream_t*);
 
 // Kernel performance structure
 struct KernelPerformance {

@@ -4,6 +4,7 @@
 #include "blur_multistream.hpp"
 #include "blur_cub.hpp"
 #include "blur_prefix_sum.hpp"
+#include "blur_thrust.hpp"
 #include <iomanip>
 #include <thread>
 
@@ -25,14 +26,16 @@ int main(int argc, char** argv) {
   // Read the video file path from the command line
   if (argc < 2) {
     std::cerr << "Usage: " << argv[0] << " <video_file_path> <mode> [kernel]" << std::endl;
-    std::cerr << "Modes: test, interactive" << std::endl;
-    std::cerr << "Kernels (for interactive mode): naive, multistream, cub, brentkunng" << std::endl;
+    std::cerr << "Modes: test, interactive, singletest" << std::endl;
+    std::cerr << "Kernels (for interactive/singletest mode): naive, multistream, cub, brentkunng, thrust" << std::endl;
     std::cerr << "  test: Test all kernels and show performance comparison" << std::endl;
-    std::cerr << "  interactive: Run specific kernel interactively" << std::endl;
+    std::cerr << "  interactive: Run specific kernel interactively with mouse controls" << std::endl;
+    std::cerr << "  singletest: Test a single kernel with performance metrics" << std::endl;
     std::cerr << "Examples:" << std::endl;
     std::cerr << "  " << argv[0] << " 0 test                 # Test all kernels with webcam" << std::endl;
     std::cerr << "  " << argv[0] << " 0 interactive cub      # Run CUB kernel with webcam" << std::endl;
-    std::cerr << "  " << argv[0] << " video.mp4 interactive naive # Run Naive kernel with video" << std::endl;
+    std::cerr << "  " << argv[0] << " 0 singletest thrust    # Test only Thrust kernel with webcam" << std::endl;
+    std::cerr << "  " << argv[0] << " video.mp4 singletest naive # Test only Naive kernel with video" << std::endl;
     return -1;
   }
 
@@ -41,15 +44,15 @@ int main(int argc, char** argv) {
   std::string selected_kernel = (argc >= 4) ? argv[3] : "";
 
   // Validate mode
-  if (mode != "test" && mode != "interactive") {
-    std::cerr << "Error: Invalid mode '" << mode << "'. Valid modes: test, interactive" << std::endl;
+  if (mode != "test" && mode != "interactive" && mode != "singletest") {
+    std::cerr << "Error: Invalid mode '" << mode << "'. Valid modes: test, interactive, singletest" << std::endl;
     return -1;
   }
 
-  // For interactive mode, kernel selection is required
-  if (mode == "interactive" && selected_kernel.empty()) {
-    std::cerr << "Error: Kernel selection required for interactive mode." << std::endl;
-    std::cerr << "Valid kernels: naive, multistream, cub, brentkunng" << std::endl;
+  // For interactive and singletest modes, kernel selection is required
+  if ((mode == "interactive" || mode == "singletest") && selected_kernel.empty()) {
+    std::cerr << "Error: Kernel selection required for " << mode << " mode." << std::endl;
+    std::cerr << "Valid kernels: naive, multistream, cub, brentkunng, thrust" << std::endl;
     return -1;
   }
 
@@ -77,7 +80,8 @@ int main(int argc, char** argv) {
     KernelPerformance("Naive CUDA", Blur_Naive),
     KernelPerformance("Multi-Stream CUDA", Blur_MultiStream),
     KernelPerformance("CUB Optimized", Blur_CUB),
-    KernelPerformance("Brent-Kung Prefix Sum", Blur_Brent_Kung)
+    KernelPerformance("Brent-Kung Prefix Sum", Blur_Brent_Kung),
+    KernelPerformance("Thrust Library", Blur_Thrust)
   };
 
   try {
@@ -107,9 +111,11 @@ int main(int argc, char** argv) {
         selected_index = 2;
       } else if (selected_kernel == "brentkunng") {
         selected_index = 3;
+      } else if (selected_kernel == "thrust") {
+        selected_index = 4;
       } else {
         std::cerr << "Error: Invalid kernel '" << selected_kernel << "'" << std::endl;
-        std::cerr << "Valid kernels: naive, multistream, cub, brentkunng" << std::endl;
+        std::cerr << "Valid kernels: naive, multistream, cub, brentkunng, thrust" << std::endl;
         return -1;
       }
 
@@ -118,6 +124,37 @@ int main(int argc, char** argv) {
       runInteractiveMode(kernels[selected_index], cap, net, width, height, frames, num_pixels,
                         hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
                         dr_in, dg_in, db_in, dr_out, dg_out, db_out);
+    
+    } else if (mode == "singletest") {
+      // Map kernel name to index (reuse the same mapping logic)
+      int selected_index = -1;
+      
+      if (selected_kernel == "naive") {
+        selected_index = 0;
+      } else if (selected_kernel == "multistream") {
+        selected_index = 1;
+      } else if (selected_kernel == "cub") {
+        selected_index = 2;
+      } else if (selected_kernel == "brentkunng") {
+        selected_index = 3;
+      } else if (selected_kernel == "thrust") {
+        selected_index = 4;
+      } else {
+        std::cerr << "Error: Invalid kernel '" << selected_kernel << "'" << std::endl;
+        std::cerr << "Valid kernels: naive, multistream, cub, brentkunng, thrust" << std::endl;
+        return -1;
+      }
+
+      std::cout << "\n=== SINGLE KERNEL TEST ===" << std::endl;
+      std::cout << "Testing " << kernels[selected_index].name << " kernel..." << std::endl;
+      
+      // Test the selected kernel with performance metrics
+      testKernel(kernels[selected_index], cap, net, width, height, frames, num_pixels,
+                hr_in, hg_in, hb_in, hr_out, hg_out, hb_out,
+                dr_in, dg_in, db_in, dr_out, dg_out, db_out);
+      
+      std::cout << "\n=== SINGLE KERNEL TEST COMPLETED ===" << std::endl;
+      std::cout << "Check the output above for detailed performance metrics." << std::endl;
     }
 
     // Cleanup

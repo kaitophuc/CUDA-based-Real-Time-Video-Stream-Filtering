@@ -21,14 +21,14 @@ The codebase has been reorganized into a modular architecture where each blur ke
 │   ├── blur_multistream.cu      # Multi-stream CUDA implementation
 │   ├── blur_cub.cu              # CUB optimized implementation
 │   ├── blur_prefix_sum.cu       # Brent-Kung prefix sum implementation
-│   └── blur_thrust.cu           # Thrust library implementation (placeholder)
+│   └── blur_thrust.cu           # Thrust library implementation
 ├── lib/               # Header files (modular organization)
 │   ├── blur_common.hpp          # Common definitions and utilities
 │   ├── blur_naive.hpp           # Naive kernel declarations
 │   ├── blur_multistream.hpp     # Multi-stream kernel declarations
 │   ├── blur_cub.hpp             # CUB kernel declarations
 │   ├── blur_prefix_sum.hpp      # Brent-Kung prefix sum declarations
-│   ├── blur_thrust.hpp          # Thrust library declarations (placeholder)
+│   ├── blur_thrust.hpp          # Thrust library declarations
 │   └── bluring_part_video.hpp   # Legacy header (compatibility)
 ├── bin/               # Compiled binaries
 │   └── bluring_part_video.exe
@@ -97,6 +97,14 @@ The project implements four different CUDA kernel variants, each in its own file
 - **Educational Value**: Demonstrates custom parallel algorithm implementation
 - **Use Case**: Research and educational comparison with CUB library
 
+### 5. **Thrust Library Kernel** (`src/blur_thrust.cu`)
+- **Architecture**: High-level parallel algorithms using CUDA Thrust library
+- **Memory Management**: Host-side Thrust operations with device kernel coordination
+- **Optimization**: STL-like interface with automatic algorithm selection
+- **Algorithm**: Two-pass separable blur using `thrust::inclusive_scan` for prefix sums
+- **Benefits**: More readable code, portable across different GPU architectures
+- **Use Case**: Rapid prototyping and high-level CUDA programming
+
 ## Common Utilities (`src/blur_common.cu`)
 
 The common utilities module provides shared functionality:
@@ -132,9 +140,11 @@ make build
 ./run.sh 0 interactive multistream
 ./run.sh 0 interactive cub
 ./run.sh 0 interactive brentkunng
+./run.sh 0 interactive thrust
 
 # Run specific kernel with video file
 ./run.sh data/input.mp4 interactive cub
+./run.sh data/input.mp4 interactive thrust
 ```
 
 ### Command Syntax
@@ -145,7 +155,7 @@ make build
 **Parameters:**
 - `video_source`: Video file path or `0` for webcam
 - `mode`: `test` or `interactive`
-- `kernel`: `naive`, `multistream`, `cub`, or `brentkunng` (required for interactive mode)
+- `kernel`: `naive`, `multistream`, `cub`, `brentkunng`, or `thrust` (required for interactive mode)
 
 ### Available Modes
 
@@ -168,6 +178,7 @@ make build
 - **`multistream`**: Multi-stream parallel processing
 - **`cub`**: CUB library optimized version
 - **`brentkunng`**: Brent-Kung prefix sum algorithm
+- **`thrust`**: Thrust Library implementation
 
 ### Examples
 
@@ -183,6 +194,9 @@ make build
 
 # Run Brent-Kung kernel with video file
 ./run.sh data/input.mp4 interactive brentkunng
+
+# Run Thrust kernel with webcam
+./run.sh 0 interactive thrust
 ```
 
 ## Performance Metrics
@@ -199,6 +213,7 @@ The framework measures:
 - **OpenCV 4.x** with DNN module
 - **OpenMP** for CPU parallelization
 - **CUB Library** (included with CUDA 11.0+)
+- **Thrust Library** (included with CUDA Toolkit)
 - **cuDNN** (optional, for advanced optimizations)
 
 ## Build Instructions
@@ -240,6 +255,7 @@ make build
 - **Multi-Stream**: `src/blur_multistream.cu` - Stream parallelism
 - **CUB Optimized**: `src/blur_cub.cu` - Advanced CUB operations
 - **Brent-Kung**: `src/blur_prefix_sum.cu` - Custom prefix sum algorithm
+- **Thrust**: `src/blur_thrust.cu` - High-level parallel algorithms with STL-like interface
 
 ### Face Detection Pipeline
 1. Frame capture via OpenCV VideoCapture
