@@ -14,7 +14,7 @@ all: clean build run
 
 build: $(HEADERS)
 	mkdir -p $(BIN_DIR)
-	$(CXX) -Xcompiler -fopenmp -rdc=true --std=c++20 -Wno-deprecated-gpu-targets -I/usr/local/cuda/include -I$(LIB_DIR) `pkg-config opencv4 --cflags --libs` -lcuda -lcudnn $(SOURCES) -o $(BIN_DIR)/$(TARGET).exe
+	$(CXX) -Xcompiler -fopenmp -rdc=true --std=c++20 --extended-lambda -Wno-deprecated-gpu-targets -I/usr/local/cuda/include -I$(LIB_DIR) `pkg-config opencv4 --cflags --libs` -lcuda -lcudnn $(SOURCES) -o $(BIN_DIR)/$(TARGET).exe
 
 run:
 	./$(BIN_DIR)/$(TARGET).exe $(ARGS)

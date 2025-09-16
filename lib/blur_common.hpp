@@ -21,7 +21,7 @@
 #include <barrier>
 
 // Add device function here
-__device__ __forceinline__ int box_count(int x, int y, int w, int h, int r) {
+__host__ __device__ __forceinline__ int box_count(int x, int y, int w, int h, int r) {
     int x_min = max(0, x - r);
     int x_max = min(w - 1, x + r);
     int y_min = max(0, y - r);
