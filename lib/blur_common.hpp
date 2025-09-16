@@ -20,6 +20,15 @@
 #include <thread>
 #include <barrier>
 
+// Add device function here
+__device__ __forceinline__ int box_count(int x, int y, int w, int h, int r) {
+    int x_min = max(0, x - r);
+    int x_max = min(w - 1, x + r);
+    int y_min = max(0, y - r);
+    int y_max = min(h - 1, y + r);
+    return (x_max - x_min + 1) * (y_max - y_min + 1);
+}
+
 // Common defines used across all kernels
 #define BLUR_SIZE 128
 #define TILE_DIM 32

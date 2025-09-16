@@ -15,17 +15,9 @@
 
 // Thrust-optimized kernel declarations
 template<int R>
-__global__ void ThrustBoxBlurHorizontal(
-    const uchar* d_in,
-    int width, int height, int pitch,
-    int *hsum);
-
+__global__ void BlurHorizontal(uchar* d_in, int width, int height);
 template<int R>
-__global__ void ThrustBoxBlurVertical(
-    const int* hsum,
-    const uchar* d_in,
-    uchar* d_out,
-    int width, int height, int pitch);
+__global__ void BlurVertical(uchar* d_in, int height, int width);
 
 // Thrust blur function declaration
 void Blur_Thrust(cv::Mat& frame, int width, int height, int frames, int num_pixels, uchar* hr_in, uchar* hg_in, uchar* hb_in, 

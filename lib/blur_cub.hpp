@@ -12,14 +12,6 @@
 const int BLOCK_THREADS = 128;
 const int ITEMS_PER_THREAD = 15;
 
-__device__ __forceinline__ int box_count(int x, int y, int width, int height, int R) {
-    int left = max(0, x - R);
-    int right = min(width - 1, x + R);
-    int top = max(0, y - R);
-    int bottom = min(height - 1, y + R);
-    return (right - left + 1) * (bottom - top + 1);
-}
-
 // CUB-optimized kernel declarations
 template<int R, int BLOCK_THREADS = BLOCK_THREADS, int ITEMS_PER_THREAD = ITEMS_PER_THREAD>
 __global__ void BoxBlurHorizontal(
